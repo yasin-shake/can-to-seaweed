@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CAN Logger</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--ink:#1b1f24;--mute:#6a737d;--line:#e1e4e8;--ok:#1a7f37;--warn:#9a6700;--bad:#cf222e;--badbg:#ffebe9;--accent:#0969da}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0d1117;--card:#161b22;--ink:#e6edf3;--mute:#8b949e;--line:#30363d;--ok:#3fb950;--warn:#d29922;--bad:#ff7b72;--badbg:#3d1418;--accent:#58a6ff}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,Segoe UI,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card)}
+h1{font-size:17px;margin:0 8px 0 0}
+.pill{padding:2px 10px;border-radius:99px;border:1px solid var(--line);font-size:12px}
+.pill.ok{color:var(--ok);border-color:var(--ok)}.pill.bad{color:var(--bad);border-color:var(--bad)}.pill.warn{color:var(--warn);border-color:var(--warn)}
+main{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));max-width:1400px;margin:auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;min-width:0}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);margin:0 0 8px}
+.big{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums}
+.sub{color:var(--mute);font-size:12px;word-break:break-all}
+.wide{grid-column:1/-1}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin:6px 0}
+.bar>i{display:block;height:100%;background:var(--accent);width:0}
+table{width:100%;border-collapse:collapse;font:12px ui-monospace,Consolas,monospace}
+th,td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--mute);font-weight:500}
+.tw{overflow-x:auto}
+#log{height:300px;overflow:auto;font:12px ui-monospace,Consolas,monospace;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px}
+#log div{white-space:pre-wrap;word-break:break-word;padding:1px 4px}
+#log .WARNING{color:var(--warn)}#log .ERROR{color:var(--bad)}
+#log .DTC{background:var(--badbg);color:var(--bad);font-weight:700;border-left:3px solid var(--bad)}
+.dtcrow td{color:var(--bad);font-weight:600}
+form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:end}
+label{display:grid;gap:3px;font-size:12px;color:var(--mute)}
+input,select,button{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
+button{background:var(--accent);color:#fff;border:0;cursor:pointer}
+#msg{font-size:12px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-bottom:8px}
+.seg button{background:var(--card);color:var(--ink);border-radius:0;border:0}
+.seg button[aria-pressed=true]{background:var(--accent);color:#fff}
+.sv{font-weight:600}.stale td{opacity:.45}.na{color:var(--mute);font-style:italic}.grp td{border-top:2px solid var(--line)}
+td small{color:var(--mute);margin-left:4px}
+[hidden]{display:none!important}
+.alert{padding:8px 12px;border-radius:6px;margin-top:8px;font-size:13px;background:var(--badbg);color:var(--bad)}
+.alert.warn{background:transparent;border:1px solid var(--warn);color:var(--warn)}
+</style>
+</head>
+<body>
+<header>
+  <h1>CAN Logger</h1>
+  <span class="pill" id="pSerial">serial</span>
+  <span class="pill" id="pUpload">upload</span>
+  <span class="pill" id="pDtc">DTC 0</span>
+  <span class="sub" id="hdrInfo"></span>
+</header>
+<main>
+  <section class="card"><h2>Session</h2><div class="big" id="session">-</div><div class="sub" id="device"></div><div class="sub" id="uptime"></div></section>
+  <section class="card"><h2>CAN frames</h2><div class="big" id="fTotal">0</div><div class="sub"><span id="fRate">0</span> frames/s &middot; this session <span id="fSess">0</span></div></section>
+  <section class="card"><h2>Current file</h2><div id="curName" style="font:600 15px ui-monospace,Consolas,monospace">-</div>
+    <div class="bar"><i id="curBar"></i></div><div class="sub" id="curInfo">waiting for frames</div></section>
+  <section class="card"><h2>Files</h2><div class="big"><span id="fWritten">0</span> <span class="sub">written</span></div>
+    <div class="sub"><span id="fUp">0</span> uploaded &middot; <span id="fPend">0</span> pending in spool</div><div class="sub" id="lastUp"></div></section>
+
+  <section class="card wide"><h2>Serial link &amp; upload health</h2>
+    <div class="sub" id="serialInfo"></div>
+    <div class="bar"><i id="utilBar"></i></div>
+    <div id="alerts"></div>
+    <div class="sub" id="uploadInfo" style="margin-top:6px"></div>
+  </section>
+
+  <section class="card wide"><h2>DTCs seen (DM1 / DM2)</h2>
+    <div class="tw"><table><thead><tr><th>type</th><th>source</th><th>SPN</th><th>FMI</th><th>OC</th><th>times seen</th><th>last</th></tr></thead><tbody id="dtcBody"><tr><td colspan="7" class="sub">none yet</td></tr></tbody></table></div></section>
+
+  <section class="card wide"><h2>Log</h2><div id="log"></div></section>
+
+  <section class="card wide"><h2>Live data</h2>
+    <div class="seg" role="group" aria-label="View">
+      <button type="button" id="vRaw" aria-pressed="true">Raw frames</button>
+      <button type="button" id="vDec" aria-pressed="false">Decoded signals</button>
+    </div>
+    <div id="rawView" class="tw"><table><thead><tr><th>time</th><th>CAN ID</th><th>prio</th><th>PGN</th><th>SA</th><th>data</th></tr></thead><tbody id="frames"></tbody></table></div>
+    <div id="decView" class="tw" hidden>
+      <div class="sub" id="decSummary" style="margin:6px 0"></div>
+      <table><thead><tr><th>message</th><th>source</th><th>signal</th><th>value</th><th>SPN</th><th>seen</th><th>updated</th></tr></thead><tbody id="sigs"></tbody></table>
+      <h2 style="margin-top:14px">Seen but not decoded (no signal definition)</h2>
+      <table><thead><tr><th>PGN</th><th>source</th><th>kind</th><th>length</th><th>last data</th><th>seen</th></tr></thead><tbody id="undec"></tbody></table>
+    </div></section>
+
+  <section class="card wide"><h2>Settings (applied live, saved to config.json)</h2>
+    <form id="cfg">
+      <label>File duration (seconds)<input name="file_seconds" type="number"></label>
+      <label>Max file size (KB, estimated)<input name="file_max_kb" type="number"></label>
+      <label>After upload<select name="after_upload"><option>delete</option><option>archive</option></select></label>
+      <label>Max retry delay (s)<input name="upload_retry_max_seconds" type="number"></label>
+      <label>Upload to S3<select name="upload_enabled"><option value="false">off</option><option value="true">on</option></select></label>
+      <button type="submit">Save</button>
+    </form>
+    <div id="msg" class="sub"></div>
+    <div class="sub">A file closes when either the duration or the size limit is reached. Port, baud, bucket and device ID are set in config.json (restart required).</div>
+  </section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const fmt=n=>Number(n).toLocaleString();
+const kb=b=>b>=1048576?(b/1048576).toFixed(2)+' MB':(b/1024).toFixed(1)+' KB';
+const dur=s=>{s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return (h?h+'h ':'')+(m?m+'m ':'')+(s%60)+'s'};
+let logSince=0, formDirty=false;
+$('cfg').addEventListener('input',()=>formDirty=true);
+
+function pill(el,text,cls){el.textContent=text;el.className='pill '+cls}
+async function refresh(){
+  let s; try{ s=await (await fetch('/api/status')).json(); }catch(e){ pill($('pSerial'),'dashboard offline','bad'); return; }
+  $('session').textContent=String(s.session).padStart(8,'0');
+  $('device').textContent='device '+s.device_id;
+  $('uptime').textContent='up '+dur(s.uptime);
+  $('fTotal').textContent=fmt(s.frames.total); $('fRate').textContent=s.frames.rate; $('fSess').textContent=fmt(s.frames.session);
+  const c=s.current_file;
+  if(c){ const limS=s.config.file_seconds, limB=s.config.file_max_kb*1024;
+    const pct=Math.min(100,Math.max(c.elapsed/limS,c.est_bytes/limB)*100);
+    $('curName').textContent=c.name; $('curBar').style.width=pct+'%';
+    $('curInfo').textContent=fmt(c.frames)+' frames · ~'+kb(c.est_bytes)+' of '+kb(limB)+' · '+Math.round(c.elapsed)+'s of '+limS+'s'+(c.dtc?(' · '+c.dtc+' DTC msg'):'');
+  } else { $('curName').textContent='-'; $('curBar').style.width='0'; $('curInfo').textContent='waiting for frames'; }
+  $('fWritten').textContent=s.files.written; $('fUp').textContent=s.files.uploaded; $('fPend').textContent=s.files.pending;
+  $('lastUp').textContent=s.upload.last?('last upload '+s.upload.last):'';
+  const se=s.serial;
+  pill($('pSerial'), se.connected?('serial '+se.port+' @ '+se.baud):'serial DISCONNECTED', se.connected?'ok':'bad');
+  const up=s.upload;
+  pill($('pUpload'),'upload: '+up.state, up.error?'bad':(up.gate?'warn':'ok'));
+  pill($('pDtc'),'DTC '+s.dtc.total, s.dtc.total?'bad':'ok');
+  $('hdrInfo').textContent=s.dtc.last?('last DTC: '+s.dtc.last):'';
+  $('serialInfo').textContent=se.port+' @ '+se.baud+' baud · '+fmt(se.lines)+' lines · '+se.bytes_per_sec+' B/s of '+Math.round(se.baud/10)+' B/s ('+se.utilization_pct+'% of link) · malformed lines '+se.bad_lines;
+  $('utilBar').style.width=Math.min(100,se.utilization_pct)+'%';
+  let al='';
+  if(!se.connected) al+='<div class="alert">Serial port not connected: '+(se.error||'')+'</div>';
+  if(se.utilization_pct>=70) al+='<div class="alert warn">Serial link is '+se.utilization_pct+'% full at '+se.baud+' baud. Bursts will overrun it and drop frames; raise the baud rate or reduce the line format.</div>';
+  if(se.bad_lines>0) al+='<div class="alert warn">'+se.bad_lines+' malformed/truncated line(s) received: frames were probably dropped on the serial link.</div>';
+  if(se.oversize_lines>0) al+='<div class="alert warn">'+fmt(se.oversize_lines)+' line(s) carried more than 8 data bytes (not a valid classic CAN frame) and were NOT recorded.</div>';
+  if(up.error) al+='<div class="alert">Upload error ('+up.failures+' consecutive): '+up.error.replace(/[<>&]/g,'')+'</div>';
+  $('alerts').innerHTML=al;
+  $('uploadInfo').textContent='Target '+up.target+(up.gate?'  |  not uploading: '+up.gate:'');
+  const rows=s.dtc.seen.map(d=>'<tr class="dtcrow"><td>'+d.kind+'</td><td>'+d.sa+'</td><td>'+d.spn+'</td><td>'+d.fmi+'</td><td>'+d.oc+'</td><td>'+fmt(d.count)+'</td><td>'+d.last+'</td></tr>').join('');
+  $('dtcBody').innerHTML=rows||'<tr><td colspan="7" class="sub">none yet</td></tr>';
+  $('frames').innerHTML=s.recent.map(f=>'<tr><td>'+f.t+'</td><td>'+f.id+'</td><td>'+f.prio+'</td><td>'+f.pgn+' (0x'+f.pgn.toString(16).toUpperCase()+')</td><td>0x'+f.sa.toString(16).toUpperCase().padStart(2,'0')+'</td><td>'+f.data+'</td></tr>').join('');
+  renderSignals(s);
+  if(!formDirty){ for(const k in s.config){ const el=$('cfg').elements[k]; if(el) el.value=String(s.config[k]); } }
+}
+const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function setView(v){
+  $('rawView').hidden=v!=='dec'?false:true; $('decView').hidden=v==='dec'?false:true;
+  $('vRaw').setAttribute('aria-pressed',v!=='dec'); $('vDec').setAttribute('aria-pressed',v==='dec');
+  try{localStorage.setItem('view',v)}catch(e){}
+}
+$('vRaw').onclick=()=>setView('raw'); $('vDec').onclick=()=>setView('dec');
+try{setView(localStorage.getItem('view')==='dec'?'dec':'raw')}catch(e){setView('raw')}
+function fmtVal(x){
+  if(x.status) return '<span class="na">'+({'N/A':'not available','error':'error','reserved':'reserved'}[x.status]||x.status)+'</span>';
+  if(typeof x.value==='number') return '<span class="sv">'+x.value.toLocaleString(undefined,{maximumFractionDigits:3})+'</span>'+(x.unit?'<small>'+esc(x.unit)+'</small>':'');
+  return '<span class="sv">'+esc(x.value)+'</span>';
+}
+function renderSignals(s){
+  const L=s.signals||[];
+  $('decSummary').textContent=L.length+' signals decoded from '+new Set(L.map(x=>x.msg+x.sa)).size+' messages · '+(s.dbc?('DBC: '+s.dbc.name+' ('+s.dbc.messages+' messages)'):'built-in signal table (no DBC loaded)');
+  let last='',h='';
+  for(const x of L){
+    const g=x.msg+x.sa, first=g!==last; last=g;
+    h+='<tr class="'+(first?'grp ':'')+(x.age>5?'stale':'')+'"><td>'+(first?'<b>'+esc(x.msg)+'</b><small>'+esc(x.msg_desc)+'</small>':'')+'</td><td>'+(first?x.sa:'')+'</td><td>'+esc(x.label)+'<small>'+esc(x.name)+'</small></td><td>'+fmtVal(x)+'</td><td>'+x.spn+'</td><td>'+fmt(x.count)+'</td><td>'+(x.age<1.5?'now':dur(x.age)+' ago')+'</td></tr>';
+  }
+  $('sigs').innerHTML=h||'<tr><td colspan="7" class="sub">no decodable messages yet</td></tr>';
+  $('undec').innerHTML=(s.undecoded||[]).map(u=>'<tr><td>'+u.pgn+' (0x'+u.pgn.toString(16).toUpperCase()+')</td><td>'+u.sa+'</td><td>'+esc(u.name)+'</td><td>'+u.length+'</td><td>'+esc(u.data)+'</td><td>'+fmt(u.count)+'</td></tr>').join('')||'<tr><td colspan="6" class="sub">none</td></tr>';
+}
+async function logs(){
+  try{
+    const r=await (await fetch('/api/logs?since='+logSince)).json(); if(!r.length) return;
+    const box=$('log'), stick=box.scrollTop+box.clientHeight>=box.scrollHeight-30;
+    for(const l of r){ logSince=Math.max(logSince,l.id); const d=document.createElement('div'); d.className=l.level; d.textContent=l.t+' '+l.level.padEnd(7)+' '+l.msg; box.appendChild(d); }
+    while(box.children.length>600) box.removeChild(box.firstChild);
+    if(stick) box.scrollTop=box.scrollHeight;
+  }catch(e){}
+}
+$('cfg').addEventListener('submit',async e=>{
+  e.preventDefault(); const f=e.target.elements;
+  const body={file_seconds:+f.file_seconds.value,file_max_kb:+f.file_max_kb.value,after_upload:f.after_upload.value,
+    upload_retry_max_seconds:+f.upload_retry_max_seconds.value,upload_enabled:f.upload_enabled.value==='true'};
+  const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json(); $('msg').textContent=r.ok?'Saved.':('Rejected: '+j.error); $('msg').style.color=r.ok?'var(--ok)':'var(--bad)';
+  if(r.ok) formDirty=false; refresh();
+});
+refresh(); logs(); setInterval(refresh,1000); setInterval(logs,1000);
+</script>
+</body>
+</html>

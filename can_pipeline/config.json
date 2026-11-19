@@ -1,0 +1,21 @@
+{
+  "serial_port": "COM3",
+  "baud": 115200,
+  "device_id": "4E4BB624",
+  "file_seconds": 30,
+  "file_max_kb": 32,
+  "upload_enabled": true,
+  "upload_retry_max_seconds": 300,
+  "after_upload": "delete",
+  "archive_dir": "archive",
+  "endpoint_url": "https://digiminedataqa1.irh.ae",
+  "region": "eu-north-1",
+  "bucket": "bedrock",
+  "prefix": "canbus-data",
+  "dbc_path": "CSS-Electronics-J1939-2025-03_v2.4.dbc",
+  "extra_dtc_pgns": [],
+  "session_from_bucket": false,
+  "first_session": 1,
+  "web_host": "127.0.0.1",
+  "web_port": 8080
+}

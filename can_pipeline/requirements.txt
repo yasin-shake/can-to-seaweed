@@ -1,0 +1,5 @@
+pyserial==3.5
+boto3==1.43.27
+asammdf==8.7.2
+numpy==2.2.0
+canmatrix==1.2

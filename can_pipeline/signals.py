@@ -1,0 +1,233 @@
+"""Decode J1939 messages into named, scaled signals (SAE J1939-71 scaling).
+
+MESSAGES: pgn -> (acronym, description, [signal, ...])
+signal = (key, label, spn, start_byte, n_bytes, scale, offset, unit)
+Value = raw * scale + offset.  Raw values >= 0xFB.. are 'not available' / 'error' / 'reserved'.
+"""
+
+T = 0.03125   # 1/32 degC per bit, offset -273 (2-byte temperatures)
+K = 1 / 128.0
+
+MESSAGES = {
+    0xF004: ("EEC1", "Electronic Engine Controller 1", [
+        ("DriversDemandEngineTorque", "Driver's demand engine torque", 512, 1, 1, 1, -125, "%"),
+        ("ActualEngineTorque", "Actual engine torque", 513, 2, 1, 1, -125, "%"),
+        ("EngineSpeed", "Engine speed", 190, 3, 2, 0.125, 0, "rpm")]),
+    0xF003: ("EEC2", "Electronic Engine Controller 2", [
+        ("AcceleratorPedalPosition", "Accelerator pedal position", 91, 1, 1, 0.4, 0, "%"),
+        ("EngineLoad", "Engine percent load at current speed", 92, 2, 1, 1, 0, "%")]),
+    0xFEF1: ("CCVS", "Cruise Control / Vehicle Speed", [
+        ("WheelBasedVehicleSpeed", "Wheel-based vehicle speed", 84, 1, 2, 1 / 256.0, 0, "km/h"),
+        ("CruiseControlSetSpeed", "Cruise control set speed", 86, 4, 1, 1, 0, "km/h")]),
+    0xFEF2: ("LFE", "Fuel Economy", [
+        ("EngineFuelRate", "Engine fuel rate", 183, 0, 2, 0.05, 0, "L/h"),
+        ("InstantaneousFuelEconomy", "Instantaneous fuel economy", 184, 2, 2, 1 / 512.0, 0, "km/L"),
+        ("AverageFuelEconomy", "Average fuel economy", 185, 4, 2, 1 / 512.0, 0, "km/L"),
+        ("ThrottlePosition", "Throttle position", 51, 6, 1, 0.4, 0, "%")]),
+    0xFEEE: ("ET1", "Engine Temperature 1", [
+        ("EngineCoolantTemperature", "Engine coolant temperature", 110, 0, 1, 1, -40, "°C"),
+        ("FuelTemperature", "Fuel temperature", 174, 1, 1, 1, -40, "°C"),
+        ("EngineOilTemperature", "Engine oil temperature", 175, 2, 2, T, -273, "°C"),
+        ("TurboOilTemperature", "Turbocharger oil temperature", 176, 4, 2, T, -273, "°C"),
+        ("EngineIntercoolerTemperature", "Engine intercooler temperature", 52, 6, 1, 1, -40, "°C"),
+        ("ThermostatOpening", "Engine intercooler thermostat opening", 1134, 7, 1, 0.4, 0, "%")]),
+    0xFEEF: ("EFL_P1", "Engine Fluid Level / Pressure 1", [
+        ("FuelDeliveryPressure", "Fuel delivery pressure", 94, 0, 1, 4, 0, "kPa"),
+        ("CrankcaseBlowbyPressure", "Extended crankcase blow-by pressure", 22, 1, 1, 0.05, 0, "kPa"),
+        ("EngineOilLevel", "Engine oil level", 98, 2, 1, 0.4, 0, "%"),
+        ("EngineOilPressure", "Engine oil pressure", 100, 3, 1, 4, 0, "kPa"),
+        ("CrankcasePressure", "Crankcase pressure", 101, 4, 2, K, -250, "kPa"),
+        ("CoolantPressure", "Engine coolant pressure", 109, 6, 1, 2, 0, "kPa"),
+        ("CoolantLevel", "Engine coolant level", 111, 7, 1, 0.4, 0, "%")]),
+    0xFEF5: ("AMB", "Ambient Conditions", [
+        ("BarometricPressure", "Barometric pressure", 108, 0, 1, 0.5, 0, "kPa"),
+        ("CabInteriorTemperature", "Cab interior temperature", 170, 1, 2, T, -273, "°C"),
+        ("AmbientAirTemperature", "Ambient air temperature", 171, 3, 2, T, -273, "°C"),
+        ("AirInletTemperature", "Engine air inlet temperature", 172, 5, 1, 1, -40, "°C"),
+        ("RoadSurfaceTemperature", "Road surface temperature", 79, 6, 2, T, -273, "°C")]),
+    0xFEF6: ("IC1", "Inlet / Exhaust Conditions 1", [
+        ("ParticulateTrapInletPressure", "Particulate trap inlet pressure", 81, 0, 1, 0.5, 0, "kPa"),
+        ("BoostPressure", "Intake manifold (boost) pressure", 102, 1, 1, 2, 0, "kPa"),
+        ("IntakeManifoldTemperature", "Intake manifold temperature", 105, 2, 1, 1, -40, "°C"),
+        ("AirInletPressure", "Air inlet pressure", 106, 3, 1, 2, 0, "kPa"),
+        ("AirFilterDifferentialPressure", "Air filter differential pressure", 107, 4, 1, 0.05, 0, "kPa"),
+        ("ExhaustGasTemperature", "Exhaust gas temperature", 173, 5, 2, T, -273, "°C"),
+        ("CoolantFilterDifferentialPressure", "Coolant filter differential pressure", 112, 7, 1, 0.5, 0, "kPa")]),
+    0xFEF7: ("VEP1", "Vehicle Electrical Power 1", [
+        ("NetBatteryCurrent", "Net battery current", 114, 0, 1, 1, -125, "A"),
+        ("AlternatorCurrent", "Alternator current", 115, 1, 1, 1, 0, "A"),
+        ("AlternatorPotential", "Alternator potential", 167, 2, 2, 0.05, 0, "V"),
+        ("BatteryPotential", "Battery potential (power input 1)", 168, 4, 2, 0.05, 0, "V"),
+        ("KeyswitchBatteryPotential", "Keyswitch battery potential", 158, 6, 2, 0.05, 0, "V")]),
+    0xFEF8: ("TRF1", "Transmission Fluids 1", [
+        ("ClutchPressure", "Transmission clutch pressure", 123, 0, 1, 16, 0, "kPa"),
+        ("TransmissionOilLevel", "Transmission oil level", 124, 1, 1, 0.4, 0, "%"),
+        ("TransmissionFilterDiffPressure", "Transmission filter differential pressure", 126, 2, 1, 2, 0, "kPa"),
+        ("TransmissionOilPressure", "Transmission oil pressure", 127, 3, 1, 16, 0, "kPa"),
+        ("TransmissionOilTemperature", "Transmission oil temperature", 177, 4, 2, T, -273, "°C")]),
+    0xFEE5: ("HOURS", "Engine Hours, Revolutions", [
+        ("EngineTotalHours", "Engine total hours of operation", 247, 0, 4, 0.05, 0, "h"),
+        ("EngineTotalRevolutions", "Engine total revolutions", 249, 4, 4, 1000, 0, "rev")]),
+    0xFEE0: ("VD", "Vehicle Distance", [
+        ("TripDistance", "Trip distance", 244, 0, 4, 0.125, 0, "km"),
+        ("TotalVehicleDistance", "Total vehicle distance", 245, 4, 4, 0.125, 0, "km")]),
+    0xFEE7: ("VH", "Vehicle Hours", [
+        ("TotalVehicleHours", "Total vehicle hours", 246, 0, 4, 0.05, 0, "h"),
+        ("TotalPowerTakeoffHours", "Total power takeoff hours", 248, 4, 4, 0.05, 0, "h")]),
+    0xFEC1: ("VDHR", "High Resolution Vehicle Distance", [
+        ("HighResTotalVehicleDistance", "High resolution total vehicle distance", 917, 0, 4, 5, 0, "m"),
+        ("HighResTripDistance", "High resolution trip distance", 918, 4, 4, 5, 0, "m")]),
+    0xFEFC: ("DD", "Dash Display", [
+        ("FuelLevel1", "Fuel level 1", 96, 0, 1, 0.4, 0, "%"),
+        ("FuelFilterDiffPressure", "Fuel filter differential pressure", 95, 1, 1, 2, 0, "kPa"),
+        ("OilFilterDiffPressure", "Engine oil filter differential pressure", 99, 2, 2, 0.01, 0, "kPa"),
+        ("CargoAmbientTemperature", "Cargo area ambient temperature", 169, 4, 2, T, -273, "°C"),
+        ("FuelLevel2", "Fuel level 2", 38, 6, 1, 0.4, 0, "%")]),
+    0xFEE9: ("LFC", "Fuel Consumption (liquid)", [
+        ("TripFuelUsed", "Trip fuel used", 182, 0, 4, 0.5, 0, "L"),
+        ("TotalFuelUsed", "Total fuel used", 250, 4, 4, 0.5, 0, "L")]),
+    0xFEF3: ("VP", "Vehicle Position", [
+        ("Latitude", "Latitude", 584, 0, 4, 1e-7, -210, "°"),
+        ("Longitude", "Longitude", 585, 4, 4, 1e-7, -210, "°")]),
+}
+
+# Messages decoded as text (ASCII, '*' delimited): pgn -> (acronym, description, [(key, label, spn)])
+TEXT_MESSAGES = {
+    0xFEEC: ("VI", "Vehicle Identification", [("VehicleIdentificationNumber", "Vehicle identification number (VIN)", 237)]),
+    0xFEEB: ("CI", "Component Identification", [
+        ("ComponentMake", "Component make", 586), ("ComponentModel", "Component model", 587),
+        ("ComponentSerialNumber", "Component serial number", 588), ("ComponentUnitNumber", "Component unit number", 233)]),
+    0xFEDA: ("SOFT", "Software Identification", []),
+}
+
+_SPECIAL_NAMES = {0xEC00: "TP.CM (transport connection management)", 0xEB00: "TP.DT (transport data)"}
+
+
+def pgn_name(pgn, dtc_pgns=None):
+    if pgn in MESSAGES:
+        return "%s - %s" % MESSAGES[pgn][:2]
+    if pgn in TEXT_MESSAGES:
+        return "%s - %s" % TEXT_MESSAGES[pgn][:2]
+    if dtc_pgns and pgn in dtc_pgns:
+        return "%s - diagnostic trouble codes" % dtc_pgns[pgn]
+    if pgn in _SPECIAL_NAMES:
+        return _SPECIAL_NAMES[pgn]
+    if 0xFF00 <= pgn <= 0xFFFF:
+        return "Proprietary B"
+    return "no definition"
+
+
+def _status(raw, n):
+    top = (raw >> (8 * (n - 1))) & 0xFF
+    if top < 0xFB:
+        return ""
+    return {0xFF: "N/A", 0xFE: "error"}.get(top, "reserved")
+
+
+_UNITS = {"degC": "°C", "deg": "°", "": ""}
+_DBC = None
+
+
+def _special(raw, bits):
+    """J1939 'not available' / 'error' / 'reserved' markers for an unsigned raw value of `bits` bits."""
+    if bits < 2:
+        return ""
+    if bits >= 8 and bits % 8 == 0:
+        top = raw >> (bits - 8)
+        if top < 0xFB:
+            return ""
+        return {0xFF: "N/A", 0xFE: "error"}.get(top, "reserved")
+    full = (1 << bits) - 1
+    return "N/A" if raw == full else "error" if raw == full - 1 else ""
+
+
+class DbcDecoder:
+    """Decodes messages with a J1939 DBC (matched by PGN; priority and source address are ignored)."""
+
+    def __init__(self, path):
+        import logging
+        import os
+        import canmatrix.formats as cf
+        logging.getLogger("canmatrix").setLevel(logging.ERROR)
+        db = list(cf.loadp(path).values())[0]
+        self.name = os.path.basename(path)
+        self.frames = {}
+        for fr in db.frames:
+            self.frames.setdefault(fr.arbitration_id.pgn, fr)
+
+    def decode(self, msg):
+        _sa, pgn, data = msg
+        fr = self.frames.get(pgn)
+        if fr is None:
+            return None
+        payload = bytes(data) if len(data) >= fr.size else bytes(data) + b"\xff" * (fr.size - len(data))
+        try:
+            decoded = fr.unpack(payload[:fr.size] if fr.size else payload)
+        except Exception:
+            return None
+        out = []
+        for name, v in decoded.items():
+            sig = v.signal
+            raw = int(v.raw_value)
+            st = _special(raw, sig.size) if not sig.is_signed else ""
+            comment = (sig.comment or "").strip()
+            label = comment.split(": ", 1)[0] if comment else name
+            spn = sig.attributes.get("SPN")
+            try:
+                spn = int(spn)
+            except (TypeError, ValueError):
+                spn = 0
+            val = None
+            if not st:
+                val = round(float(v.phys_value), 4)
+                if val == int(val) and abs(val) < 1e15:
+                    val = int(val)
+            out.append({"name": name, "label": label[:80], "spn": spn, "value": val,
+                        "unit": _UNITS.get(sig.unit or "", sig.unit or ""), "status": st})
+        return fr.name, (fr.comment or fr.name).strip(), out
+
+
+def load_dbc(path):
+    """Load a J1939 DBC as the primary decoder; returns the number of messages."""
+    global _DBC
+    _DBC = DbcDecoder(path)
+    return len(_DBC.frames)
+
+
+def dbc_info():
+    return {"name": _DBC.name, "messages": len(_DBC.frames)} if _DBC else None
+
+
+def decode(msg):
+    """msg = (sa, pgn, payload) -> (acronym, description, [signal dict]) or None if PGN has no definition."""
+    sa, pgn, data = msg
+    if _DBC is not None and pgn not in TEXT_MESSAGES:      # text fields (VIN etc.) are decoded below
+        res = _DBC.decode(msg)
+        if res is not None:
+            return res
+    d = MESSAGES.get(pgn)
+    if d:
+        out = []
+        for key, label, spn, b, n, scale, off, unit in d[2]:
+            if len(data) < b + n:
+                continue
+            raw = int.from_bytes(data[b:b + n], "little")
+            st = _status(raw, n)
+            val = None if st else round(raw * scale + off, 4)
+            out.append({"name": key, "label": label, "spn": spn, "value": val, "unit": unit, "status": st})
+        return d[0], d[1], out
+    t = TEXT_MESSAGES.get(pgn)
+    if t:
+        text = bytes(data).decode("ascii", errors="replace")
+        out = []
+        if pgn == 0xFEDA:                       # first byte = number of fields
+            fields = text[1:].split("*")
+            out = [{"name": "SoftwareId%d" % (i + 1), "label": "Software identification %d" % (i + 1),
+                    "spn": 234, "value": f, "unit": "", "status": ""} for i, f in enumerate(fields[:data[0]]) if f]
+        else:
+            fields = text.split("*")
+            for (key, label, spn), f in zip(t[2], fields):
+                if f.strip():
+                    out.append({"name": key, "label": label, "spn": spn, "value": f.strip(), "unit": "", "status": ""})
+        return t[0], t[1], out
+    return None

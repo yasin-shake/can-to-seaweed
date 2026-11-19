@@ -1,0 +1,5 @@
+.venv/
+can_pipeline/spool/
+can_pipeline/logs/
+can_pipeline/__pycache__/
+samples/
