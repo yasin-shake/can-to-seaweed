@@ -47,13 +47,27 @@ def main():
     print("[ok]   CREDS  both environment variables present (values not shown)")
 
     key = "%s/_test/connection-test-%s.txt" % (cfg.get("prefix"), time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()))
+    body = bytes(range(256)) * 4 + b"\r\n0\r\nconnection test\n"        # binary, includes CR/LF bytes
     try:
-        P.s3_client(cfg).put_object(Bucket=cfg.get("bucket"), Key=key, Body=b"connection test\n")
+        cl = P.s3_client(cfg)
+        cl.put_object(Bucket=cfg.get("bucket"), Key=key, Body=body)
     except Exception as e:
         print("[FAIL] PUT    s3://%s/%s\n       %s" % (cfg.get("bucket"), key, P.classify_error(e)))
         P.save_state(s3_test_ok=False)
         return 1
     print("[ok]   PUT    s3://%s/%s" % (cfg.get("bucket"), key))
+    try:
+        back = cl.get_object(Bucket=cfg.get("bucket"), Key=key)["Body"].read()
+    except Exception as e:
+        print("[FAIL] GET    could not read the test object back: %s" % P.classify_error(e))
+        P.save_state(s3_test_ok=False)
+        return 1
+    if back != body:
+        print("[FAIL] ROUND TRIP  sent %d bytes, stored %d bytes; the server altered the upload (first bytes %r)"
+              % (len(body), len(back), back[:24]))
+        P.save_state(s3_test_ok=False)
+        return 1
+    print("[ok]   ROUND TRIP  downloaded bytes are identical to what was sent (%d bytes)" % len(body))
     P.save_state(s3_test_ok=True, s3_test_key=key)
     print("S3 test passed. Uploading can now be enabled (config.json 'upload_enabled' or the dashboard).")
     return 0
