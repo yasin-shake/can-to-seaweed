@@ -99,7 +99,10 @@ with tempfile.TemporaryDirectory() as t:
     # header: identical to the CANedge template except HD start time + serial/session/split text
     tpl = open(os.path.join(P.BASE, "templates", "canedge_template.bin"), "rb").read()
     diff = [i for i in range(len(tpl)) if raw[i] != tpl[i]]
-    assert diff and all((136 <= i < 144) or (2640 <= i < 2616 + 902) for i in diff), diff[:10]
+    old_serial = mf4writer._TEMPLATE_SERIAL
+    serial_spots = {j + k for j in [m_.start() for m_ in __import__('re').finditer(old_serial, tpl)] for k in range(8)}
+    assert diff and all((136 <= i < 144) or (2640 <= i < 2616 + 902) or i in serial_spots for i in diff), diff[:10]
+    assert old_serial not in raw and raw.count(b'4E4BB624') == len(serial_spots) // 8, 'serial not replaced everywhere'
     assert raw[len(tpl) - 24:len(tpl) - 20] == b"##DT" and raw[len(tpl)] == 66          # records start with record id
     m = MDF(p)
     ids = m.get("CAN_DataFrame.ID", group=23)

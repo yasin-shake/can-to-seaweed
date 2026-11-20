@@ -28,6 +28,7 @@ _HD_START_NS = 64 + 72               # HD block at 64: 24-byte header + 6 links,
 _MD_OFFSET = 2616                    # HD comment (device / file information XML)
 
 assert _TEMPLATE[64:68] == b"##HD" and _TEMPLATE[_MD_OFFSET:_MD_OFFSET + 4] == b"##MD"
+_TEMPLATE_SERIAL = re.search(rb'name="serial number"[^>]*>([0-9A-F]{8})<', _TEMPLATE).group(1)
 assert _TEMPLATE[-24:-20] == b"##DT" and struct.unpack_from("<Q", _TEMPLATE, len(_TEMPLATE) - 16)[0] == 24
 
 
@@ -55,11 +56,14 @@ def _patch_header(device_id, session, split, start_epoch):
         assert n == 1 and len(new) == len(text), "header template field not found: %s" % pattern
         return new
 
-    md = sub(rb'(<e name="serial number"[^>]*>)([^<]*)(</e>)', device_id.upper().encode(), md)
     md = sub(rb'(<e name="session"[^>]*>)([^<]*)(</e>)', b"%8d" % session, md)
     md = sub(rb'(<e name="split"[^>]*>)([^<]*)(</e>)', b"%8d" % split, md)
     h[_MD_OFFSET + 24:end] = md
-    return bytes(h)
+    # the serial number also appears in other header comment blocks: replace every occurrence
+    new_serial = device_id.upper().encode()
+    out = bytes(h).replace(_TEMPLATE_SERIAL, new_serial)
+    assert len(out) == len(_TEMPLATE)
+    return out
 
 
 def write_mf4(path, start_epoch, frames, device_id, session, split):
