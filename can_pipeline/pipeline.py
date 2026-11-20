@@ -52,7 +52,7 @@ log = logging.getLogger("pipeline")
 # keys editable live from the web UI: name -> (type, min, max) / allowed values
 EDITABLE = {
     "file_seconds": (int, 5, 86400),
-    "file_max_kb": (int, 16, 102400),
+    "file_max_kb": (int, 4, 102400),     # KB of logged frame data per file (the ~104 KB header is extra)
     "upload_enabled": (bool,),
     "after_upload": ("enum", ("delete", "archive")),
     "upload_retry_max_seconds": (int, 10, 3600),
@@ -233,7 +233,7 @@ class Recorder:
                 self.jfile.flush()
                 self.last_flush = time.time()
             if (ts - self.start >= self.cfg.get("file_seconds")
-                    or mf4writer.estimated_size(len(self.frames)) >= self.cfg.get("file_max_kb") * 1024):
+                    or len(self.frames) * mf4writer.RECORD_BYTES >= self.cfg.get("file_max_kb") * 1024):
                 self._rotate()
 
     def tick(self):
@@ -265,6 +265,9 @@ def recover_journals(cfg, jobs):
     """Turn journals left by a crash / hard stop into MF4 files (nothing is lost)."""
     for p in sorted(glob.glob(os.path.join(BASE, "spool", "_journal", "*.csv"))):
         try:
+            if os.path.getsize(p) == 0:          # left behind by a hard kill before anything was flushed
+                os.remove(p)
+                continue
             with open(p, encoding="ascii") as f:
                 head = f.readline().strip().lstrip("#").split(",")
                 session, split, start = int(head[0]), int(head[1]), float(head[2])
@@ -614,6 +617,7 @@ def build_status(cfg, rec):
                        key=lambda x: x["pgn"])
         s = {
             "signals": sig_list, "undecoded": undec, "dbc": signals.dbc_info(),
+            "header_bytes": mf4writer.BASE_BYTES,
             "uptime": int(time.time() - STATS.started), "session": STATS.session, "device_id": c["device_id"],
             "serial": {"port": c["serial_port"], "baud": c["baud"], "connected": STATS.serial_connected,
                        "error": STATS.serial_error, "lines": STATS.lines, "bad_lines": STATS.bad_lines,
@@ -717,6 +721,11 @@ def main():
     args = ap.parse_args()
     cfg = Config(args.config)
     setup_logging(cfg)
+    try:
+        mf4writer.check_device_id(cfg.get("device_id"))
+    except ValueError as e:
+        log.error("%s", e)
+        return 1
     stop = threading.Event()
     jobs = queue.Queue()
 

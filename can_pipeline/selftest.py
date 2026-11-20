@@ -86,18 +86,37 @@ assert signals.decode((0, 0xFEEE, b"\x28\x28")) is not None
 assert signals.decode((0, 0xFEDA, b"\x01" + b"123456789ABCDE*"))[2][0]["value"] == "123456789ABCDE"
 print("DBC ok:", signals.dbc_info())
 
-# --- MF4 round trip
+# --- MF4 round trip (CANedge layout)
+import struct
 frames = [(1000.0 + i * 0.012, 0x18FE0000 + i, bytes(range(i % 9))) for i in range(300)]
+frames.append((1000.005, 0x18FEEE00, bytes.fromhex("28282022202228ff")))        # out of order on purpose
 with tempfile.TemporaryDirectory() as t:
-    p = os.path.join(t, mf4writer.file_name(1, 1000.0))
-    size = mf4writer.write_mf4(p, 1000.0, frames, "4E4BB624", 7, 1)
+    p = os.path.join(t, mf4writer.file_name(7, 1000.0))
+    size = mf4writer.write_mf4(p, 1000.0, frames, "4E4BB624", 7, 3)
+    raw = open(p, "rb").read()
+    assert len(raw) == size == mf4writer.estimated_size(301), (len(raw), size)
+    assert not os.path.exists(p + ".part")
+    # header: identical to the CANedge template except HD start time + serial/session/split text
+    tpl = open(os.path.join(P.BASE, "templates", "canedge_template.bin"), "rb").read()
+    diff = [i for i in range(len(tpl)) if raw[i] != tpl[i]]
+    assert diff and all((136 <= i < 144) or (2640 <= i < 2616 + 902) for i in diff), diff[:10]
+    assert raw[len(tpl) - 24:len(tpl) - 20] == b"##DT" and raw[len(tpl)] == 66          # records start with record id
     m = MDF(p)
-    ids = m.get("CAN_DataFrame.ID", group=0)
-    assert len(ids.samples) == 300 and int(ids.samples[5]) == 0x18FE0005
-    assert abs(ids.timestamps[10] - 0.12) < 1e-3
-    assert m.get("CAN_DataFrame.DLC", group=0).samples[5] == 5
-    assert bytes(m.get("CAN_DataFrame.DataBytes", group=0).samples[7][:7]) == bytes(range(7))
-    assert 1 in m.bus_logging_map["CAN"] and "4E4BB624" in m.header.comment and "session" in m.header.comment
-    print("MF4 ok:", os.path.basename(p), size, "bytes,", m.header.start_time)
+    ids = m.get("CAN_DataFrame.ID", group=23)
+    assert len(ids.samples) == 301 and abs(float(ids.timestamps[0])) < 1e-6
+    assert all(ids.timestamps[i] <= ids.timestamps[i + 1] for i in range(300)), "timestamps not monotonic"
+    k = [i for i in range(301) if int(ids.samples[i]) == 0x18FE0005][0]
+    assert abs(ids.timestamps[k] - 0.06) < 1e-5 and m.get("CAN_DataFrame.DLC", group=23).samples[k] == 5
+    assert bytes(m.get("CAN_DataFrame.DataBytes", group=23).samples[k][:5]) == bytes(range(5))
+    assert int(m.get("CAN_DataFrame.BusChannel", group=23).samples[0]) == 1 and int(m.get("CAN_DataFrame.IDE", group=23).samples[0]) == 1
+    assert m.bus_logging_map["CAN"].get(1) is not None
+    assert "4E4BB624" in m.header.comment and "      %d" % 7 in m.header.comment and "       3" in m.header.comment
+    assert int(m.header.start_time.timestamp()) == 1000
+    print("MF4 ok:", os.path.basename(p), size, "bytes,", len(diff), "header bytes patched")
     m.close()
+try:
+    mf4writer.check_device_id("4E4BB62")
+    raise SystemExit("device id check failed")
+except ValueError:
+    pass
 print("selftest OK")
