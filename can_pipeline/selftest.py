@@ -122,4 +122,22 @@ try:
     raise SystemExit("device id check failed")
 except ValueError:
     pass
+# --- S3 uploads must NOT be aws-chunked (servers that do not decode it store the framing inside the object)
+class _Stop(Exception):
+    pass
+os.environ.setdefault("AWS_ACCESS_KEY_ID", "dummy")
+os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "dummy")
+_cl = P.s3_client(P.Config(os.path.join(P.BASE, "config.json")))
+_seen = {}
+def _hook(request, **kw):
+    _seen["h"] = {k.lower(): str(v) for k, v in request.headers.items()}
+    raise _Stop()
+_cl.meta.events.register("before-send.s3.PutObject", _hook)
+try:
+    _cl.put_object(Bucket="b", Key="k", Body=b"x" * 100)
+except _Stop:
+    pass
+assert "aws-chunked" not in _seen["h"].get("content-encoding", ""), _seen["h"]
+assert "x-amz-trailer" not in _seen["h"] and _seen["h"]["content-length"] == "100", _seen["h"]
+print("S3 PUT is a plain (non-chunked) request")
 print("selftest OK")

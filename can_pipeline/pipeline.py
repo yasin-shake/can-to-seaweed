@@ -325,7 +325,12 @@ def s3_client(cfg):
         "s3", endpoint_url=cfg.get("endpoint_url"), region_name=cfg.get("region"),
         config=BConfig(s3={"addressing_style": "path"}, signature_version="s3v4",
                        retries={"max_attempts": 2, "mode": "standard"},
-                       connect_timeout=10, read_timeout=30))
+                       connect_timeout=10, read_timeout=30,
+                       # boto3>=1.36 otherwise uploads as 'aws-chunked' with a trailing CRC32. S3-compatible
+                       # servers that do not decode that (SeaweedFS etc.) store the chunk framing INSIDE the
+                       # object, which corrupts every file ("Unable to load block header for type <hex size>").
+                       request_checksum_calculation="when_required",
+                       response_checksum_validation="when_required"))
 
 
 def creds_present():
@@ -411,6 +416,10 @@ def uploader_loop(cfg, stop):
                     client = s3_client(cfg)
                 size = os.path.getsize(p)
                 client.upload_file(p, cfg.get("bucket"), key)
+                stored = client.head_object(Bucket=cfg.get("bucket"), Key=key)["ContentLength"]
+                if stored != size:      # never delete the local copy of a corrupted upload
+                    raise RuntimeError("stored object is %d bytes but local file is %d bytes (server altered the "
+                                       "upload, e.g. aws-chunked framing)" % (stored, size))
             except Exception as e:
                 failures += 1
                 msg = classify_error(e)
