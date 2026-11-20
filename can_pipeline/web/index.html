@@ -89,14 +89,14 @@ td small{color:var(--mute);margin-left:4px}
   <section class="card wide"><h2>Settings (applied live, saved to config.json)</h2>
     <form id="cfg">
       <label>File duration (seconds)<input name="file_seconds" type="number"></label>
-      <label>Max file size (KB, estimated)<input name="file_max_kb" type="number"></label>
+      <label>Max data per file (KB)<input name="file_max_kb" type="number"></label>
       <label>After upload<select name="after_upload"><option>delete</option><option>archive</option></select></label>
       <label>Max retry delay (s)<input name="upload_retry_max_seconds" type="number"></label>
       <label>Upload to S3<select name="upload_enabled"><option value="false">off</option><option value="true">on</option></select></label>
       <button type="submit">Save</button>
     </form>
     <div id="msg" class="sub"></div>
-    <div class="sub">A file closes when either the duration or the size limit is reached. Port, baud, bucket and device ID are set in config.json (restart required).</div>
+    <div class="sub">A file closes when either the duration or the size limit is reached. The size limit counts logged frame data (20 bytes per frame); every file also carries a fixed ~104 KB header, as CANedge files do, so the uploaded file is about 104 KB larger. Port, baud, bucket and device ID are set in config.json (restart required).</div>
   </section>
 </main>
 <script>
@@ -115,7 +115,7 @@ async function refresh(){
   $('uptime').textContent='up '+dur(s.uptime);
   $('fTotal').textContent=fmt(s.frames.total); $('fRate').textContent=s.frames.rate; $('fSess').textContent=fmt(s.frames.session);
   const c=s.current_file;
-  if(c){ const limS=s.config.file_seconds, limB=s.config.file_max_kb*1024;
+  if(c){ const limS=s.config.file_seconds, limB=s.config.file_max_kb*1024+s.header_bytes;
     const pct=Math.min(100,Math.max(c.elapsed/limS,c.est_bytes/limB)*100);
     $('curName').textContent=c.name; $('curBar').style.width=pct+'%';
     $('curInfo').textContent=fmt(c.frames)+' frames · ~'+kb(c.est_bytes)+' of '+kb(limB)+' · '+Math.round(c.elapsed)+'s of '+limS+'s'+(c.dtc?(' · '+c.dtc+' DTC msg'):'');

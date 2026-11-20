@@ -1,24 +1,35 @@
-"""Write CANedge-style bus-logging MF4 files (one CAN1_Rx_IDE group of CAN_DataFrame records)."""
+"""Write CANedge-compatible MF4 files.
+
+A CANedge log file is a fixed header (73 channel groups; only CAN1_Rx_IDE is used here), an empty
+"unfinalized" DT block header, then raw 20-byte records until end of file:
+
+    [record id 0x42][timestamp: 6 bytes, microseconds LE][CAN id: 4 bytes LE][DLC: 1 byte][data: 8 bytes]
+
+BusChannel (1), IDE (1) and Dir (0) are constants stored in the header, not in the records.
+The header comes from templates/canedge_template.bin (built from a real CANedge file by make_template.py)
+and only the start time, serial number, session and split fields are patched, in place and at the same length.
+This is the structure the CSS Electronics decoders (mdf_iter, mdf2parquet_decode) require; files written
+by asammdf (float timestamps, no record ids) are readable by asammdf but rejected by them.
+"""
 import os
-from datetime import datetime, timezone
+import re
+import struct
 
 import numpy as np
-from asammdf import MDF, Signal
-from asammdf.blocks import v4_constants as v4c
-from asammdf.blocks.source_utils import Source
 
-RECORD_BYTES = 19          # Timestamp(6) + CAN_DataFrame(13), as in the CANedge sample files
-BASE_BYTES = 3000          # approximate fixed overhead of a one-group file
+HERE = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(HERE, "templates", "canedge_template.bin"), "rb") as _f:
+    _TEMPLATE = _f.read()
 
-_DT = np.dtype([
-    ("CAN_DataFrame.BusChannel", "<u1"),
-    ("CAN_DataFrame.ID", "<u4"),
-    ("CAN_DataFrame.IDE", "<u1"),
-    ("CAN_DataFrame.DLC", "<u1"),
-    ("CAN_DataFrame.DataLength", "<u1"),
-    ("CAN_DataFrame.DataBytes", "u1", (8,)),
-    ("CAN_DataFrame.Dir", "<u1"),
-])
+RECORD_BYTES = 20
+BASE_BYTES = len(_TEMPLATE)          # fixed header size (about 105 KB)
+RECORD_ID = 66                       # record id of the CAN1_Rx_IDE group in the template
+_HD_START_NS = 64 + 72               # HD block at 64: 24-byte header + 6 links, then hd_start_time_ns
+_MD_OFFSET = 2616                    # HD comment (device / file information XML)
+
+assert _TEMPLATE[64:68] == b"##HD" and _TEMPLATE[_MD_OFFSET:_MD_OFFSET + 4] == b"##MD"
+_TEMPLATE_SERIAL = re.search(rb'name="serial number"[^>]*>([0-9A-F]{8})<', _TEMPLATE).group(1)
+assert _TEMPLATE[-24:-20] == b"##DT" and struct.unpack_from("<Q", _TEMPLATE, len(_TEMPLATE) - 16)[0] == 24
 
 
 def estimated_size(n_frames):
@@ -29,49 +40,54 @@ def file_name(split, start_epoch):
     return "%08d-%08X.MF4" % (split, int(start_epoch))
 
 
-def _comment(device_id, session, split):
-    return (
-        "<HDcomment>\n<TX/>\n<common_properties>\n"
-        '<tree name="Device Information">\n'
-        '<e name="serial number">%s</e>\n'
-        '<e name="device type">PC-SERIAL-LOGGER</e>\n'
-        "</tree>\n"
-        '<tree name="File Information">\n'
-        '<e name="session">%8d</e>\n<e name="split">%8d</e>\n'
-        "</tree>\n</common_properties>\n</HDcomment>" % (device_id, session, split)
-    )
+def check_device_id(device_id):
+    if not re.fullmatch(r"[0-9A-Fa-f]{8}", device_id or ""):
+        raise ValueError("device_id must be exactly 8 hex characters (like 4E4BB624), got %r" % (device_id,))
+
+
+def _patch_header(device_id, session, split, start_epoch):
+    h = bytearray(_TEMPLATE)
+    struct.pack_into("<Q", h, _HD_START_NS, int(start_epoch * 1e6) * 1000)
+    end = _MD_OFFSET + struct.unpack_from("<Q", h, _MD_OFFSET + 8)[0]
+    md = bytes(h[_MD_OFFSET + 24:end])
+
+    def sub(pattern, value, text):
+        new, n = re.subn(pattern, lambda m: m.group(1) + value + m.group(3), text)
+        assert n == 1 and len(new) == len(text), "header template field not found: %s" % pattern
+        return new
+
+    md = sub(rb'(<e name="session"[^>]*>)([^<]*)(</e>)', b"%8d" % session, md)
+    md = sub(rb'(<e name="split"[^>]*>)([^<]*)(</e>)', b"%8d" % split, md)
+    h[_MD_OFFSET + 24:end] = md
+    # the serial number also appears in other header comment blocks: replace every occurrence
+    new_serial = device_id.upper().encode()
+    out = bytes(h).replace(_TEMPLATE_SERIAL, new_serial)
+    assert len(out) == len(_TEMPLATE)
+    return out
 
 
 def write_mf4(path, start_epoch, frames, device_id, session, split):
-    """frames: list of (epoch_ts, can_id, data_bytes). Writes atomically (tmp + rename)."""
+    """frames: list of (epoch_ts, can_id, data_bytes<=8). Writes atomically (tmp + rename); returns size."""
+    check_device_id(device_id)
     n = len(frames)
-    rec = np.zeros(n, dtype=_DT)
-    ts = np.empty(n, dtype=np.float64)
+    rec = np.zeros((n, RECORD_BYTES), dtype=np.uint8)
+    ts = np.empty(n, dtype=np.int64)
+    ids = np.empty(n, dtype="<u4")
     for i, (t, cid, data) in enumerate(frames):
-        ts[i] = max(0.0, round(t - start_epoch, 4))
-        rec["CAN_DataFrame.ID"][i] = cid & 0x1FFFFFFF
+        ts[i] = int(round((t - start_epoch) * 1e6))
+        ids[i] = cid & 0x1FFFFFFF
         d = bytes(data[:8])
-        rec["CAN_DataFrame.DLC"][i] = len(d)
-        rec["CAN_DataFrame.DataLength"][i] = len(d)
-        rec["CAN_DataFrame.DataBytes"][i, :len(d)] = np.frombuffer(d, dtype=np.uint8)
-    rec["CAN_DataFrame.BusChannel"] = 1
-    rec["CAN_DataFrame.IDE"] = 1
-    rec["CAN_DataFrame.Dir"] = 0
-    order = np.argsort(ts, kind="stable")        # timestamps must be monotonic
-    rec, ts = rec[order], ts[order]
-
-    m = MDF(version="4.11")
-    m.header.start_time = datetime.fromtimestamp(start_epoch, tz=timezone.utc)
-    m.header.comment = _comment(device_id, session, split)
-    src = Source(name="CAN1", path="CAN1", comment="",
-                 source_type=v4c.SOURCE_BUS, bus_type=v4c.BUS_TYPE_CAN)
-    m.append(Signal(samples=rec, timestamps=ts, name="CAN_DataFrame"),
-             acq_name="CAN1_Rx_IDE", acq_source=src, comment="")
-    g = m.groups[0]
-    g.channel_group.flags = v4c.FLAG_CG_BUS_EVENT | v4c.FLAG_CG_PLAIN_BUS_EVENT
-    g.channels[0].name = "Timestamp"
-    tmp = path[:-4] + ".part.mf4"      # asammdf forces a .mf4 suffix; pending_files() ignores *.part.mf4
-    m.save(tmp, overwrite=True)
-    m.close()
+        rec[i, 11] = len(d)
+        rec[i, 12:12 + len(d)] = np.frombuffer(d, dtype=np.uint8)
+    ts = np.clip(ts, 0, (1 << 48) - 1)
+    order = np.argsort(ts, kind="stable")                       # timestamps must be monotonic
+    rec[:, 0] = RECORD_ID
+    rec[:, 1:7] = ts.astype("<u8").view(np.uint8).reshape(n, 8)[:, :6]
+    rec[:, 7:11] = ids.view(np.uint8).reshape(n, 4)
+    rec = rec[order]
+    tmp = path + ".part"                                         # not *.MF4, so the uploader ignores it
+    with open(tmp, "wb") as f:
+        f.write(_patch_header(device_id, session, split, start_epoch))
+        f.write(rec.tobytes())
     os.replace(tmp, path)
-    return os.path.getsize(path)
+    return BASE_BYTES + n * RECORD_BYTES
