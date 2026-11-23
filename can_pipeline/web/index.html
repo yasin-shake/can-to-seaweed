@@ -40,6 +40,30 @@ button{background:var(--accent);color:#fff;border:0;cursor:pointer}
 .seg button[aria-pressed=true]{background:var(--accent);color:#fff}
 .sv{font-weight:600}.stale td{opacity:.45}.na{color:var(--mute);font-style:italic}.grp td{border-top:2px solid var(--line)}
 td small{color:var(--mute);margin-left:4px}
+
+.ctl{max-width:1400px;margin:auto;padding:16px 16px 0}
+.ctlbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
+.ctlbar h2{margin:0 auto 0 0;font-size:15px}
+.ctlbar .seg{margin:0}
+.cols{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+.col{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;gap:10px;min-width:0}
+.colh{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.col h3{margin:0;font-size:15px}.col h3 small{display:block;color:var(--mute);font-weight:400;font-size:12px}
+.sw{padding:4px 12px;border-radius:99px;font-weight:700;font-size:12px;border:1px solid var(--line);color:var(--mute);white-space:nowrap}
+.sw.on{background:var(--bad);border-color:var(--bad);color:#fff}
+.sw.na{opacity:.5}
+.pot{display:grid;gap:3px}.pot .row{display:flex;justify-content:space-between;font-size:12px;color:var(--mute)}
+.pot .bar{height:12px;margin:0}.pot .bar>i{transition:width .3s}
+.vals{display:flex;flex-wrap:wrap;gap:16px}
+.val .big{font-size:30px;line-height:1.1}.val .big small{font-size:14px;color:var(--mute);margin-left:3px;font-weight:400}
+.val .lbl{font-size:12px;color:var(--mute);display:flex;align-items:center;gap:5px}
+.dot{width:10px;height:3px;border-radius:2px;display:inline-block}
+.val.stale .big{opacity:.4}
+canvas{width:100%;height:210px;display:block}
+.fine{font-size:12px;color:var(--mute)}.fine b{color:var(--ink)}
+details.more{max-width:1400px;margin:16px auto 0;padding:0 16px}
+details.more>summary{cursor:pointer;font-weight:600;padding:8px 0;color:var(--mute)}
+details.more main{padding:0 0 16px}
 [hidden]{display:none!important}
 .alert{padding:8px 12px;border-radius:6px;margin-top:8px;font-size:13px;background:var(--badbg);color:var(--bad)}
 .alert.warn{background:transparent;border:1px solid var(--warn);color:var(--warn)}
@@ -53,6 +77,17 @@ td small{color:var(--mute);margin-left:4px}
   <span class="pill" id="pDtc">DTC 0</span>
   <span class="sub" id="hdrInfo"></span>
 </header>
+<section class="ctl">
+  <div class="ctlbar"><h2>POTs &amp; switches</h2>
+    <div class="seg" role="group" aria-label="Time window" id="win">
+      <button type="button" data-w="30">30 s</button><button type="button" data-w="60">1 min</button><button type="button" data-w="300">5 min</button>
+    </div>
+    <span class="pill" id="feed">waiting for data</span>
+  </div>
+  <div class="cols" id="cols"></div>
+  <p class="fine">Only values driven by the POTs and switches are shown. The simulator sends each value about every 1.5 s. A red bar under a graph means the switch was held down; each press also sends one DM1 fault (counted under each graph).</p>
+</section>
+<details class="more"><summary>Logger status, DTC table, raw frames, log &amp; settings</summary>
 <main>
   <section class="card"><h2>Session</h2><div class="big" id="session">-</div><div class="sub" id="device"></div><div class="sub" id="uptime"></div></section>
   <section class="card"><h2>CAN frames</h2><div class="big" id="fTotal">0</div><div class="sub"><span id="fRate">0</span> frames/s &middot; this session <span id="fSess">0</span></div></section>
@@ -99,6 +134,7 @@ td small{color:var(--mute);margin-left:4px}
     <div class="sub">A file closes when either the duration or the size limit is reached. The size limit counts logged frame data (20 bytes per frame); every file also carries a fixed ~104 KB header, as CANedge files do, so the uploaded file is about 104 KB larger. Port, baud, bucket and device ID are set in config.json (restart required).</div>
   </section>
 </main>
+</details>
 <script>
 const $=id=>document.getElementById(id);
 const fmt=n=>Number(n).toLocaleString();
@@ -139,6 +175,7 @@ async function refresh(){
   $('alerts').innerHTML=al;
   $('uploadInfo').textContent='Target '+up.target+(up.gate?'  |  not uploading: '+up.gate:'');
   const rows=s.dtc.seen.map(d=>'<tr class="dtcrow"><td>'+d.kind+'</td><td>'+d.sa+'</td><td>'+d.spn+'</td><td>'+d.fmi+'</td><td>'+d.oc+'</td><td>'+fmt(d.count)+'</td><td>'+d.last+'</td></tr>').join('');
+  window.__dtc=s.dtc.seen.filter(d=>d.kind==='DM1');
   $('dtcBody').innerHTML=rows||'<tr><td colspan="7" class="sub">none yet</td></tr>';
   $('frames').innerHTML=s.recent.map(f=>'<tr><td>'+f.t+'</td><td>'+f.id+'</td><td>'+f.prio+'</td><td>'+f.pgn+' (0x'+f.pgn.toString(16).toUpperCase()+')</td><td>0x'+f.sa.toString(16).toUpperCase().padStart(2,'0')+'</td><td>'+f.data+'</td></tr>').join('');
   renderSignals(s);
@@ -185,6 +222,80 @@ $('cfg').addEventListener('submit',async e=>{
   const j=await r.json(); $('msg').textContent=r.ok?'Saved.':('Rejected: '+j.error); $('msg').style.color=r.ok?'var(--ok)':'var(--bad)';
   if(r.ok) formDirty=false; refresh();
 });
+
+// ---------------- POT / switch panel ----------------
+const COLS=[
+ {id:'A0',title:'POT A0 · Engine Speed',sub:'drives Intake manifold pressure',pot:'pot_A0',sw:'sw_A1',swn:'A1',lines:['intake_kpa'],spn:190,fmi:0},
+ {id:'A2',title:'POT A2 · Vehicle Speed',sub:'drives Engine coolant temperature',pot:'pot_A2',sw:'sw_A3',swn:'A3',lines:['coolant_c'],spn:84,fmi:0},
+ {id:'A4',title:'POT A4 · Oil Pressure',sub:'drives Fuel delivery and Oil pressure',pot:'pot_A4',sw:'sw_A5',swn:'A5',lines:['fuel_kpa','oil_kpa'],spn:100,fmi:1}];
+const COLORS=['#0969da','#d1630a'];
+let META={}, DATA={}, win=60, lastNow=0;
+try{win=+localStorage.getItem('win')||60}catch(e){}
+$('cols').innerHTML=COLS.map(c=>`<div class="col">
+  <div class="colh"><h3>${c.title}<small>${c.sub}</small></h3><span class="sw na" id="sw${c.id}">${c.swn} -</span></div>
+  <div class="pot"><div class="row"><span>POT position</span><span id="pt${c.id}">-</span></div><div class="bar"><i id="pb${c.id}"></i></div></div>
+  <div class="vals" id="vals${c.id}"></div>
+  <canvas id="cv${c.id}"></canvas>
+  <div class="fine" id="dt${c.id}"></div></div>`).join('');
+function setWin(w){win=w;try{localStorage.setItem('win',w)}catch(e){}
+  document.querySelectorAll('#win button').forEach(b=>b.setAttribute('aria-pressed',+b.dataset.w===w)); draw();}
+document.querySelectorAll('#win button').forEach(b=>b.onclick=()=>setWin(+b.dataset.w));
+const last=k=>{const a=DATA[k];return a&&a.length?a[a.length-1]:null};
+const cssv=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function drawChart(c){
+  const cv=$('cv'+c.id), dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight;
+  if(!W||!META[c.lines[0]]) return;
+  if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr)}
+  const g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const now=Date.now()/1000, t0=now-win, L=44,R=8,T=8,B=34, pw=W-L-R, ph=H-T-B;
+  const lo=Math.min(...c.lines.map(k=>META[k].min)), hi=Math.max(...c.lines.map(k=>META[k].max));
+  const X=t=>L+(t-t0)/win*pw, Y=v=>T+ph-(v-lo)/(hi-lo)*ph;
+  g.font='11px system-ui,sans-serif';g.fillStyle=cssv('--mute');g.strokeStyle=cssv('--line');g.lineWidth=1;g.textAlign='right';
+  for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4,y=Math.round(Y(v))+.5;g.beginPath();g.moveTo(L,y);g.lineTo(W-R,y);g.stroke();g.fillText(Math.round(v),L-6,y+4)}
+  g.textAlign='center';
+  for(let i=0;i<=4;i++){g.fillText(i===4?'now':'-'+Math.round(win-win*i/4)+'s',X(t0+win*i/4),T+ph+14)}
+  c.lines.forEach((k,i)=>{
+    const a=DATA[k]||[]; g.strokeStyle=COLORS[i];g.lineWidth=2;g.setLineDash(i?[6,4]:[]);g.beginPath();let pen=false;
+    for(const [t,v] of a){ if(t<t0-30) continue; if(v==null){pen=false;continue}
+      const x=Math.max(L,X(t)),y=Y(v); if(!pen){g.moveTo(x,y);pen=true}else g.lineTo(x,y)}
+    g.stroke(); g.setLineDash([]);
+    g.fillStyle=COLORS[i];
+    for(const [t,v] of a){ if(v!=null&&t>=t0){g.beginPath();g.arc(X(t),Y(v),2.4,0,7);g.fill()} }
+  });
+  const sy=T+ph+20; g.fillStyle=cssv('--line');g.fillRect(L,sy,pw,8);
+  const s=DATA[c.sw]||[]; g.fillStyle=cssv('--bad');
+  for(let i=0;i<s.length;i++){ if(!s[i][1]) continue; const ta=Math.max(s[i][0],t0), tb=Math.min(i+1<s.length?s[i+1][0]:now,now);
+    if(tb>t0) g.fillRect(X(ta),sy,Math.max(3,X(tb)-X(ta)),8)}
+  g.textAlign='left';g.fillStyle=cssv('--mute');g.fillText(c.swn,2,sy+8);
+}
+const draw=()=>COLS.forEach(drawChart);
+function render(dtc){
+  const now=Date.now()/1000; let fresh=false;
+  for(const c of COLS){
+    const p=last(c.pot), s=last(c.sw);
+    if(p){ $('pt'+c.id).textContent=p[1]+' / 1023  ('+(p[1]/10.23).toFixed(0)+'%)'; $('pb'+c.id).style.width=(p[1]/10.23)+'%'; if(now-p[0]<5) fresh=true; }
+    const sw=$('sw'+c.id);
+    if(s&&now-s[0]<5){sw.textContent=c.swn+(s[1]?' PRESSED':' released');sw.className='sw'+(s[1]?' on':'')}
+    else{sw.textContent=c.swn+' -';sw.className='sw na'}
+    $('vals'+c.id).innerHTML=c.lines.map((k,i)=>{const m=META[k]||{},l=last(k),old=!l||now-l[0]>5;
+      return '<div class="val'+(old?' stale':'')+'"><div class="big">'+(l&&l[1]!=null?l[1].toLocaleString(undefined,{maximumFractionDigits:1}):'-')+'<small>'+esc(m.unit||'')+'</small></div>'+
+      '<div class="lbl"><span class="dot" style="background:'+COLORS[i]+'"></span>'+esc(m.label||k)+'</div></div>'}).join('');
+    const d=(dtc||[]).find(x=>x.spn===c.spn&&x.fmi===c.fmi);
+    $('dt'+c.id).innerHTML='Button sends DM1 SPN '+c.spn+' FMI '+c.fmi+': '+(d?'<b>'+d.count+'</b> received, last at '+d.last:'none yet');
+  }
+  pill($('feed'), fresh?'live':'no POT/switch data', fresh?'ok':'warn');
+  draw();
+}
+async function pollWatch(){
+  try{
+    const r=await (await fetch('/api/watch?since='+Math.max(0,lastNow-3))).json(); lastNow=r.now;
+    for(const k in r.series){ const s=r.series[k]; META[k]=s; const a=DATA[k]=DATA[k]||[]; const lt=a.length?a[a.length-1][0]:0;
+      for(const pt of s.points) if(pt[0]>lt) a.push(pt);
+      const cut=Date.now()/1000-330; while(a.length>1&&a[0][0]<cut) a.shift(); }
+    render(window.__dtc);
+  }catch(e){}
+}
+setWin(win); pollWatch(); setInterval(pollWatch,1000); window.addEventListener('resize',draw);
 refresh(); logs(); setInterval(refresh,1000); setInterval(logs,1000);
 </script>
 </body>

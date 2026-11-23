@@ -231,3 +231,40 @@ def decode(msg):
                     out.append({"name": key, "label": label, "spn": spn, "value": f.strip(), "unit": "", "status": ""})
         return t[0], t[1], out
     return None
+
+
+# ---- values driven by the simulator's POTs (A0/A2/A4) and switches (A1/A3/A5) ------------------
+# key -> (group, label, unit, axis_min, axis_max).  Decoded from the simulator's own frame layout
+# (independent of the DBC: the simulator's PGN 64976 does not follow the standard IC2 layout).
+WATCH = {
+    "pot_A0": ("A0", "POT A0 raw", "", 0, 1023),
+    "pot_A2": ("A2", "POT A2 raw", "", 0, 1023),
+    "pot_A4": ("A4", "POT A4 raw", "", 0, 1023),
+    "sw_A1": ("A0", "Switch A1 (Engine Speed DTC)", "", 0, 1),
+    "sw_A3": ("A2", "Switch A3 (Vehicle Speed DTC)", "", 0, 1),
+    "sw_A5": ("A4", "Switch A5 (Oil Pressure DTC)", "", 0, 1),
+    "intake_kpa": ("A0", "Intake manifold pressure (SPN 3563)", "kPa", 0, 500),
+    "coolant_c": ("A2", "Engine coolant temperature (SPN 110)", "°C", 0, 150),
+    "fuel_kpa": ("A4", "Fuel delivery pressure (SPN 94)", "kPa", 0, 1000),
+    "oil_kpa": ("A4", "Engine oil pressure (SPN 100)", "kPa", 0, 1000),
+}
+
+
+def watch(msg):
+    """msg = (sa, pgn, payload) -> {watch key: value or None (not available)} for POT/switch-driven data."""
+    _sa, pgn, d = msg
+    out = {}
+    if pgn == 0xFF00 and len(d) >= 8 and d[7] == 0xFF and d[6] & 0xF8 == 0xF8:
+        pots = [int.from_bytes(d[i:i + 2], "little") for i in (0, 2, 4)]
+        if all(v <= 1023 for v in pots):
+            out.update(pot_A0=pots[0], pot_A2=pots[1], pot_A4=pots[2],
+                       sw_A1=d[6] & 1, sw_A3=d[6] >> 1 & 1, sw_A5=d[6] >> 2 & 1)
+    elif pgn == 0xFDD0 and len(d) >= 2:
+        raw = int.from_bytes(d[0:2], "little")
+        out["intake_kpa"] = None if raw >= 0xFB00 else round(raw * 0.0078125, 2)
+    elif pgn == 0xFEEE and len(d) >= 1:
+        out["coolant_c"] = None if d[0] >= 0xFB else d[0] - 40
+    elif pgn == 0xFEEF and len(d) >= 4:
+        out["fuel_kpa"] = None if d[0] >= 0xFB else d[0] * 4
+        out["oil_kpa"] = None if d[3] >= 0xFB else d[3] * 4
+    return out
