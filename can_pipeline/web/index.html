@@ -225,9 +225,9 @@ $('cfg').addEventListener('submit',async e=>{
 
 // ---------------- POT / switch panel ----------------
 const COLS=[
- {id:'A0',title:'POT A0 · Engine Speed',sub:'drives Intake manifold pressure',pot:'pot_A0',sw:'sw_A1',swn:'A1',lines:['intake_kpa'],spn:190,fmi:0},
- {id:'A2',title:'POT A2 · Vehicle Speed',sub:'drives Engine coolant temperature',pot:'pot_A2',sw:'sw_A3',swn:'A3',lines:['coolant_c'],spn:84,fmi:0},
- {id:'A4',title:'POT A4 · Oil Pressure',sub:'drives Fuel delivery and Oil pressure',pot:'pot_A4',sw:'sw_A5',swn:'A5',lines:['fuel_kpa','oil_kpa'],spn:100,fmi:1}];
+ {id:'A0',title:'POT A0 · Engine Speed',sub:'drives Intake manifold pressure',pot:'pot_A0',sw:'sw_A1',swn:'A1',lines:['intake_kpa']},
+ {id:'A2',title:'POT A2 · Vehicle Speed',sub:'drives Engine coolant temperature',pot:'pot_A2',sw:'sw_A3',swn:'A3',lines:['coolant_c']},
+ {id:'A4',title:'POT A4 · Oil Pressure',sub:'drives Fuel delivery and Oil pressure',pot:'pot_A4',sw:'sw_A5',swn:'A5',lines:['fuel_kpa','oil_kpa']}];
 const COLORS=['#0969da','#d1630a'];
 let META={}, DATA={}, DTCI={}, win=60, lastNow=0;
 try{win=+localStorage.getItem('win')||60}catch(e){}
@@ -280,8 +280,10 @@ function render(dtc){
     $('vals'+c.id).innerHTML=c.lines.map((k,i)=>{const m=META[k]||{},l=last(k),old=!l||now-l[0]>5;
       return '<div class="val'+(old?' stale':'')+'"><div class="big">'+(l&&l[1]!=null?l[1].toLocaleString(undefined,{maximumFractionDigits:1}):'-')+'<small>'+esc(m.unit||'')+'</small></div>'+
       '<div class="lbl"><span class="dot" style="background:'+COLORS[i]+'"></span><span><b class="nm">'+esc(m.name||m.label||k)+'</b><br>'+esc(m.label||k)+'</span></div></div>'}).join('');
-    const d=(dtc||[]).find(x=>x.spn===c.spn&&x.fmi===c.fmi), i=DTCI[c.spn]||{};
-    $('dt'+c.id).innerHTML='<div>DTC on press (DM1): <b class="nm">'+esc(i.name||('SPN '+c.spn))+'</b> &middot; SPN '+c.spn+' &middot; FMI '+c.fmi+'</div>'+
+    const i=DTCI[c.swn];
+    if(!i) continue;
+    const d=(dtc||[]).find(x=>x.spn===i.spn&&x.fmi===i.fmi);
+    $('dt'+c.id).innerHTML='<div>DTC on press (DM1): <b class="nm">'+esc(i.name)+'</b> &middot; SPN '+i.spn+' &middot; FMI '+i.fmi+'</div>'+
       '<div>'+esc(i.fmi_text||'')+'</div><div>'+(d?'<b>'+d.count+'</b> received, last at '+d.last:'none received yet')+'</div>';
   }
   pill($('feed'), fresh?'live':'no POT/switch data', fresh?'ok':'warn');
@@ -289,7 +291,7 @@ function render(dtc){
 }
 async function pollWatch(){
   try{
-    const r=await (await fetch('/api/watch?since='+Math.max(0,lastNow-3))).json(); lastNow=r.now; for(const d of (r.dtcs||[])) DTCI[d.spn]=d;
+    const r=await (await fetch('/api/watch?since='+Math.max(0,lastNow-3))).json(); lastNow=r.now; for(const d of (r.dtcs||[])) DTCI[d.switch]=d;
     for(const k in r.series){ const s=r.series[k]; META[k]=s; const a=DATA[k]=DATA[k]||[]; const lt=a.length?a[a.length-1][0]:0;
       for(const pt of s.points) if(pt[0]>lt) a.push(pt);
       const cut=Date.now()/1000-330; while(a.length>1&&a[0][0]<cut) a.shift(); }

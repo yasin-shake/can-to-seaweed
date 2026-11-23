@@ -240,9 +240,9 @@ WATCH = {
     "pot_A0": ("A0", "POT A0 raw", "", 0, 1023),
     "pot_A2": ("A2", "POT A2 raw", "", 0, 1023),
     "pot_A4": ("A4", "POT A4 raw", "", 0, 1023),
-    "sw_A1": ("A0", "Switch A1 (Engine Speed DTC)", "", 0, 1),
-    "sw_A3": ("A2", "Switch A3 (Vehicle Speed DTC)", "", 0, 1),
-    "sw_A5": ("A4", "Switch A5 (Oil Pressure DTC)", "", 0, 1),
+    "sw_A1": ("A0", "Switch A1", "", 0, 1),
+    "sw_A3": ("A2", "Switch A3", "", 0, 1),
+    "sw_A5": ("A4", "Switch A5", "", 0, 1),
     "intake_kpa": ("A0", "Intake manifold pressure (SPN 3563)", "kPa", 0, 500),
     "coolant_c": ("A2", "Engine coolant temperature (SPN 110)", "°C", 0, 150),
     "fuel_kpa": ("A4", "Fuel delivery pressure (SPN 94)", "kPa", 0, 1000),
@@ -272,7 +272,12 @@ def watch(msg):
 
 # ---- names for SPNs / FMIs (used by the dashboard for DTCs and telemetry) -------------------------
 WATCH_SPN = {"intake_kpa": 3563, "coolant_c": 110, "fuel_kpa": 94, "oil_kpa": 100}
-BUTTON_DTCS = [(190, 0), (84, 0), (100, 1)]      # (SPN, FMI) sent by buttons A1, A3, A5
+# (SPN, FMI, alert label) for each simulator switch.
+BUTTON_DTCS = {
+    "A1": (3554, 0, "Engine coolant volume ratio"),
+    "A3": (3107, 0, "Water in fuel"),
+    "A5": (17858, 1, "Accelerator pedal 1 low idle switch"),
+}
 FMI_TEXT = {
     0: "Data valid but above normal operational range - most severe level",
     1: "Data valid but below normal operational range - most severe level",
