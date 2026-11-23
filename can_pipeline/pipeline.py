@@ -162,6 +162,7 @@ class Stats:
         self.undecoded = {}                      # (pgn, sa) -> {count, last, data, length}
         self.per_sec = collections.deque(maxlen=60)   # [sec, frames, bytes]
         self.recent = collections.deque(maxlen=25)
+        self.watch_hist = {k: collections.deque(maxlen=3000) for k in signals.WATCH}   # key -> (time, value)
         self.buffer_warn = ""
 
     def tick_second(self, frames, nbytes):
@@ -518,6 +519,8 @@ class SerialReader(threading.Thread):
         sa, pgn, payload = msg
         res = signals.decode(msg)
         with STATS.lock:
+            for k, v in signals.watch(msg).items():
+                STATS.watch_hist[k].append((round(now, 3), v))
             if res is None:
                 if pgn not in self.dec.pgns:
                     u = STATS.undecoded.setdefault((pgn, sa), {"count": 0})
@@ -676,6 +679,13 @@ def make_handler(cfg, rec):
                 return self._send(200, page, "text/html; charset=utf-8")
             if u.path == "/api/status":
                 return self._send(200, build_status(cfg, rec))
+            if u.path == "/api/watch":
+                since = float(parse_qs(u.query).get("since", ["0"])[0] or 0)
+                with STATS.lock:
+                    ser = {k: {"group": m[0], "label": m[1], "unit": m[2], "min": m[3], "max": m[4],
+                               "points": [[t, v] for t, v in STATS.watch_hist[k] if t > since]}
+                           for k, m in signals.WATCH.items()}
+                return self._send(200, {"now": round(time.time(), 3), "series": ser})
             if u.path == "/api/logs":
                 since = int(parse_qs(u.query).get("since", ["0"])[0] or 0)
                 return self._send(200, MEM.since(since))
