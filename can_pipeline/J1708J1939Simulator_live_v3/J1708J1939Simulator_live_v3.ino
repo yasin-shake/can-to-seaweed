@@ -288,6 +288,7 @@ U8      ucSweepEnabled       = TRUE;    // FALSE = freeze the tradeshow ambient 
 #define CAN_INT_PIN                 2   // Digital input pin for the CAN interrupt.
 #define CAN_CS_PIN                  9   // Digital input pin for the SPI Chip Select (CS).
 #define RS485_RXTXPIN              22   // Digital input pin for J1708 UART transmit/receive.
+#define CONTINUOUS_DTC_BROADCAST      1   // 1 = also broadcast the fixed DTC set every cycle; 0 = button-press DTCs only
 #define RS232_BAUD             115200   // Baud rate for the debugging serial port.
 #define RS485_BAUD               9600   // Baud rate for the RS485/J1708 serial port (9600).
 #define CAN_BAUD_RATE     CAN_250KBPS   // CAN baud rate of 250k.
@@ -890,9 +891,15 @@ U8      ucDebugPrintAnalogDigitalInputs   = FALSE;
   else if( usLoopCount == 4 )
     {
       //
-      // No constant DTC traffic: Send_J1939_DTCs, the J2012 DTCs, DTC counts and freeze frames are
-      // no longer broadcast.  DTCs are sent only by CheckButtonDTCs() when a button is pressed.
+      // Constant DTC traffic (the original behaviour).  Set CONTINUOUS_DTC_BROADCAST to 0 at the top
+      // of the file to go back to "DTCs only when a button is pressed" (CheckButtonDTCs()).
       //
+#if CONTINUOUS_DTC_BROADCAST
+      Send_J1939_DTCs( 0 );                    // 22 generic DTCs (DM1, DM2, DM6, ... SPN 1000..1021)
+      Send_PGN_64906_J2012DTCs();
+      Send_PGN_40448_DTCCounts();
+      Send_PGN_DM25_ExpandedFreezeFrame();
+#endif
       Send_PGN_DM24_SPNSupport();
 
       Send_PGN_65248_Distances();
