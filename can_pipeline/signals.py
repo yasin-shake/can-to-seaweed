@@ -268,3 +268,41 @@ def watch(msg):
         out["fuel_kpa"] = None if d[0] >= 0xFB else d[0] * 4
         out["oil_kpa"] = None if d[3] >= 0xFB else d[3] * 4
     return out
+
+
+# ---- names for SPNs / FMIs (used by the dashboard for DTCs and telemetry) -------------------------
+WATCH_SPN = {"intake_kpa": 3563, "coolant_c": 110, "fuel_kpa": 94, "oil_kpa": 100}
+BUTTON_DTCS = [(190, 0), (84, 0), (100, 1)]      # (SPN, FMI) sent by buttons A1, A3, A5
+FMI_TEXT = {
+    0: "Data valid but above normal operational range - most severe level",
+    1: "Data valid but below normal operational range - most severe level",
+    2: "Data erratic, intermittent or incorrect", 3: "Voltage above normal, or shorted to high source",
+    4: "Voltage below normal, or shorted to low source", 5: "Current below normal or open circuit",
+    6: "Current above normal or grounded circuit", 7: "Mechanical system not responding or out of adjustment",
+    8: "Abnormal frequency, pulse width or period", 9: "Abnormal update rate", 10: "Abnormal rate of change",
+    11: "Root cause not known", 12: "Bad intelligent device or component", 13: "Out of calibration",
+    14: "Special instructions", 15: "Data valid but above normal operating range - least severe level",
+    16: "Data valid but above normal operating range - moderately severe level",
+    17: "Data valid but below normal operating range - least severe level",
+    18: "Data valid but below normal operating range - moderately severe level",
+    19: "Received network data in error", 20: "Data drifted high", 21: "Data drifted low", 31: "Condition exists"}
+_SPN_NAMES = None
+
+
+def spn_name(spn):
+    """Decoded signal name for an SPN (DBC name when a DBC is loaded, else the built-in table), or ''."""
+    global _SPN_NAMES
+    if _SPN_NAMES is None:
+        names = {}
+        for msg in MESSAGES.values():
+            for key, _l, s, *_ in msg[2]:
+                names[s] = key
+        if _DBC is not None:
+            for fr in _DBC.frames.values():
+                for sg in fr.signals:
+                    try:
+                        names[int(sg.attributes.get("SPN"))] = sg.name
+                    except (TypeError, ValueError):
+                        pass
+        _SPN_NAMES = names
+    return _SPN_NAMES.get(spn, "")

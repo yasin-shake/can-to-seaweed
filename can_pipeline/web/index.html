@@ -58,7 +58,7 @@ td small{color:var(--mute);margin-left:4px}
 .val .big{font-size:30px;line-height:1.1}.val .big small{font-size:14px;color:var(--mute);margin-left:3px;font-weight:400}
 .val .lbl{font-size:12px;color:var(--mute);display:flex;align-items:center;gap:5px}
 .dot{width:10px;height:3px;border-radius:2px;display:inline-block}
-.val.stale .big{opacity:.4}
+.val.stale .big{opacity:.4}.nm{color:var(--ink);font-weight:600}
 canvas{width:100%;height:210px;display:block}
 .fine{font-size:12px;color:var(--mute)}.fine b{color:var(--ink)}
 details.more{max-width:1400px;margin:16px auto 0;padding:0 16px}
@@ -174,7 +174,7 @@ async function refresh(){
   if(up.error) al+='<div class="alert">Upload error ('+up.failures+' consecutive): '+up.error.replace(/[<>&]/g,'')+'</div>';
   $('alerts').innerHTML=al;
   $('uploadInfo').textContent='Target '+up.target+(up.gate?'  |  not uploading: '+up.gate:'');
-  const rows=s.dtc.seen.map(d=>'<tr class="dtcrow"><td>'+d.kind+'</td><td>'+d.sa+'</td><td>'+d.spn+'</td><td>'+d.fmi+'</td><td>'+d.oc+'</td><td>'+fmt(d.count)+'</td><td>'+d.last+'</td></tr>').join('');
+  const rows=s.dtc.seen.map(d=>'<tr class="dtcrow"><td>'+d.kind+'</td><td>'+d.sa+'</td><td>'+d.spn+(d.name?' <small>'+esc(d.name)+'</small>':'')+'</td><td>'+d.fmi+(d.fmi_text?' <small>'+esc(d.fmi_text)+'</small>':'')+'</td><td>'+d.oc+'</td><td>'+fmt(d.count)+'</td><td>'+d.last+'</td></tr>').join('');
   window.__dtc=s.dtc.seen.filter(d=>d.kind==='DM1');
   $('dtcBody').innerHTML=rows||'<tr><td colspan="7" class="sub">none yet</td></tr>';
   $('frames').innerHTML=s.recent.map(f=>'<tr><td>'+f.t+'</td><td>'+f.id+'</td><td>'+f.prio+'</td><td>'+f.pgn+' (0x'+f.pgn.toString(16).toUpperCase()+')</td><td>0x'+f.sa.toString(16).toUpperCase().padStart(2,'0')+'</td><td>'+f.data+'</td></tr>').join('');
@@ -229,7 +229,7 @@ const COLS=[
  {id:'A2',title:'POT A2 · Vehicle Speed',sub:'drives Engine coolant temperature',pot:'pot_A2',sw:'sw_A3',swn:'A3',lines:['coolant_c'],spn:84,fmi:0},
  {id:'A4',title:'POT A4 · Oil Pressure',sub:'drives Fuel delivery and Oil pressure',pot:'pot_A4',sw:'sw_A5',swn:'A5',lines:['fuel_kpa','oil_kpa'],spn:100,fmi:1}];
 const COLORS=['#0969da','#d1630a'];
-let META={}, DATA={}, win=60, lastNow=0;
+let META={}, DATA={}, DTCI={}, win=60, lastNow=0;
 try{win=+localStorage.getItem('win')||60}catch(e){}
 $('cols').innerHTML=COLS.map(c=>`<div class="col">
   <div class="colh"><h3>${c.title}<small>${c.sub}</small></h3><span class="sw na" id="sw${c.id}">${c.swn} -</span></div>
@@ -279,16 +279,17 @@ function render(dtc){
     else{sw.textContent=c.swn+' -';sw.className='sw na'}
     $('vals'+c.id).innerHTML=c.lines.map((k,i)=>{const m=META[k]||{},l=last(k),old=!l||now-l[0]>5;
       return '<div class="val'+(old?' stale':'')+'"><div class="big">'+(l&&l[1]!=null?l[1].toLocaleString(undefined,{maximumFractionDigits:1}):'-')+'<small>'+esc(m.unit||'')+'</small></div>'+
-      '<div class="lbl"><span class="dot" style="background:'+COLORS[i]+'"></span>'+esc(m.label||k)+'</div></div>'}).join('');
-    const d=(dtc||[]).find(x=>x.spn===c.spn&&x.fmi===c.fmi);
-    $('dt'+c.id).innerHTML='Button sends DM1 SPN '+c.spn+' FMI '+c.fmi+': '+(d?'<b>'+d.count+'</b> received, last at '+d.last:'none yet');
+      '<div class="lbl"><span class="dot" style="background:'+COLORS[i]+'"></span><span><b class="nm">'+esc(m.name||m.label||k)+'</b><br>'+esc(m.label||k)+'</span></div></div>'}).join('');
+    const d=(dtc||[]).find(x=>x.spn===c.spn&&x.fmi===c.fmi), i=DTCI[c.spn]||{};
+    $('dt'+c.id).innerHTML='<div>DTC on press (DM1): <b class="nm">'+esc(i.name||('SPN '+c.spn))+'</b> &middot; SPN '+c.spn+' &middot; FMI '+c.fmi+'</div>'+
+      '<div>'+esc(i.fmi_text||'')+'</div><div>'+(d?'<b>'+d.count+'</b> received, last at '+d.last:'none received yet')+'</div>';
   }
   pill($('feed'), fresh?'live':'no POT/switch data', fresh?'ok':'warn');
   draw();
 }
 async function pollWatch(){
   try{
-    const r=await (await fetch('/api/watch?since='+Math.max(0,lastNow-3))).json(); lastNow=r.now;
+    const r=await (await fetch('/api/watch?since='+Math.max(0,lastNow-3))).json(); lastNow=r.now; for(const d of (r.dtcs||[])) DTCI[d.spn]=d;
     for(const k in r.series){ const s=r.series[k]; META[k]=s; const a=DATA[k]=DATA[k]||[]; const lt=a.length?a[a.length-1][0]:0;
       for(const pt of s.points) if(pt[0]>lt) a.push(pt);
       const cut=Date.now()/1000-330; while(a.length>1&&a[0][0]<cut) a.shift(); }

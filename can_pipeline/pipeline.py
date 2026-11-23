@@ -500,6 +500,14 @@ class SerialReader(threading.Thread):
             with STATS.lock:
                 STATS.serial_connected, STATS.serial_error = True, ""
             log.info("Serial port %s opened at %d baud", port, baud)
+            # Newer simulator firmware only prints "Tx J1939 ..." lines after a LIVE ON command (older firmware
+            # ignores it). Opening the port resets an Arduino, so wait for its bootloader before sending.
+            self.stop_ev.wait(2.5)
+            try:
+                ser.write(b"LIVE ON\n")
+                ser.flush()
+            except Exception as e:
+                log.warning("Could not send LIVE ON to the simulator: %s", e)
             last_err = None
             try:
                 self._pump(ser)
@@ -615,7 +623,8 @@ def build_status(cfg, rec):
     cur = rec.current()
     with STATS.lock:
         dtc_list = sorted(({"kind": k[0], "sa": "0x%02X" % k[1], "spn": k[2], "fmi": k[3], "count": v[0],
-                            "last": v[1], "oc": v[2]} for k, v in STATS.dtc_seen.items()),
+                            "last": v[1], "oc": v[2], "name": signals.spn_name(k[2]),
+                            "fmi_text": signals.FMI_TEXT.get(k[3], "")} for k, v in STATS.dtc_seen.items()),
                           key=lambda x: x["last"], reverse=True)[:20]
         now = time.time()
         sig_list = sorted(({"msg": e["msg"], "msg_desc": e["msg_desc"], "sa": "0x%02X" % e["sa"],
@@ -683,9 +692,12 @@ def make_handler(cfg, rec):
                 since = float(parse_qs(u.query).get("since", ["0"])[0] or 0)
                 with STATS.lock:
                     ser = {k: {"group": m[0], "label": m[1], "unit": m[2], "min": m[3], "max": m[4],
+                               "name": signals.spn_name(signals.WATCH_SPN.get(k, 0)),
                                "points": [[t, v] for t, v in STATS.watch_hist[k] if t > since]}
                            for k, m in signals.WATCH.items()}
-                return self._send(200, {"now": round(time.time(), 3), "series": ser})
+                dtcs = [{"spn": s, "fmi": f, "name": signals.spn_name(s), "fmi_text": signals.FMI_TEXT.get(f, "")}
+                        for s, f in signals.BUTTON_DTCS]
+                return self._send(200, {"now": round(time.time(), 3), "series": ser, "dtcs": dtcs})
             if u.path == "/api/logs":
                 since = int(parse_qs(u.query).get("since", ["0"])[0] or 0)
                 return self._send(200, MEM.since(since))
