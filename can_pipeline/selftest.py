@@ -42,7 +42,7 @@ assert d.feed(0x18ECFF00, bytes([0x20, 0x11, 0, 3, 0xFF, 0xEC, 0xFE, 0])) == []
 assert d.feed(0x18EBFF00, bytes([1, 0x31, 0x58, 0x4B, 0x44, 0x50, 0x34, 0x45])) == []
 
 # --- simulator button DTCs: one DM1 single frame per press (lamp 0x10, one DTC, OC in byte 5)
-for spn, fmi, oc in ((190, 0, 1), (84, 0, 2), (100, 1, 3)):
+for spn, fmi, oc in ((3554, 0, 1), (3107, 0, 2), (17858, 1, 3)):
     line = "Tx J1939 CANID[18FECA00] PGN[0x00FECA|65226] SRC[00] DST[FF] DATA[10][FF][%02X][%02X][%02X][%02X][FF][FF]" % (
         spn & 0xFF, spn >> 8, ((spn >> 16) << 5) | fmi, oc)
     r = P.parse_line(line)

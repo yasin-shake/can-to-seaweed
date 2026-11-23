@@ -695,8 +695,9 @@ def make_handler(cfg, rec):
                                "name": signals.spn_name(signals.WATCH_SPN.get(k, 0)),
                                "points": [[t, v] for t, v in STATS.watch_hist[k] if t > since]}
                            for k, m in signals.WATCH.items()}
-                dtcs = [{"spn": s, "fmi": f, "name": signals.spn_name(s), "fmi_text": signals.FMI_TEXT.get(f, "")}
-                        for s, f in signals.BUTTON_DTCS]
+                dtcs = [{"switch": switch, "spn": spn, "fmi": fmi, "name": name,
+                         "fmi_text": signals.FMI_TEXT.get(fmi, "")}
+                        for switch, (spn, fmi, name) in signals.BUTTON_DTCS.items()]
                 return self._send(200, {"now": round(time.time(), 3), "series": ser, "dtcs": dtcs})
             if u.path == "/api/logs":
                 since = int(parse_qs(u.query).get("since", ["0"])[0] or 0)

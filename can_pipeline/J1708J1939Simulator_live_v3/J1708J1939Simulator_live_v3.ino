@@ -43,9 +43,9 @@ const char *szDate          = "01/07/2021"                                      
 //  0-1         2 Bytes   A0 - Engine Speed Potentiometer   1.0     0 - 1023   0.0
 //  2-3         2 Bytes   A2 - Vehicle Speed Potentiometer  1.0     0 - 1023   0.0
 //  4-5         2 Bytes   A4 - Oil Pressure Potentiometer   1.0     0 - 1023   0.0
-//  6     0     1 Bit     A1 - SPN 3554 DTC button          1.0     0 - 1      0.0    1=pressed, 0=released
-//  6     1     1 Bit     A3 - SPN 3107 DTC button          1.0     0 - 1      0.0    1=pressed, 0=released
-//  6     2     1 Bit     A5 - SPN 17858 DTC button         1.0     0 - 1      0.0    1=pressed, 0=released
+//  6     0     1 Bit     A1 - DTC 3554 button              1.0     0 - 1      0.0    1=pressed, 0=released
+//  6     1     1 Bit     A3 - DTC 3107 button              1.0     0 - 1      0.0    1=pressed, 0=released
+//  6     2     1 Bit     A5 - DTC 17858 button             1.0     0 - 1      0.0    1=pressed, 0=released
 //  7           1 Byte    Reserved, set to FF
 //
 //====================================================================================================
@@ -92,9 +92,9 @@ const char *szDate          = "01/07/2021"                                      
 //                  POT A2 - Vehicle Speed         (PGN 65265 / SPN  84)
 //                  POT A4 - Oil Pressure          (PGN 65263 / SPN 100)
 //
-//                  SW  A1 - DTC button: DM1 SPN  3554, FMI 0
-//                  SW  A3 - DTC button: DM1 SPN  3107, FMI 0
-//                  SW  A5 - DTC button: DM1 SPN 17858, FMI 1
+//                  SW  A1 - DTC button: DM1 SPN 111, FMI 2 (alert 3554)
+//                  SW  A3 - DTC button: DM1 SPN  97, FMI 3 (alert 3107)
+//                  SW  A5 - DTC button: DM1 SPN 558, FMI 2 (alert 17858)
 //
 //                  The buttons no longer drive Park Brake / Brake Pedal / Clutch Pedal.  There are no
 //                  continuous DTCs any more: each button PRESS sends exactly ONE DM1 (PGN 65226) frame
@@ -367,9 +367,9 @@ U8      ucClutchPedalSwitch       = OFF;  // Legacy signal state - no longer dri
 // Physical button state (ON = pressed) and the previous sample, used for press-edge detection.
 //
 
-U8      ucBtnA1Pressed            = OFF;  // SPN 3554 fault button.
-U8      ucBtnA3Pressed            = OFF;  // SPN 3107 fault button.
-U8      ucBtnA5Pressed            = OFF;  // SPN 17858 fault button.
+U8      ucBtnA1Pressed            = OFF;  // Alert 3554 button.
+U8      ucBtnA3Pressed            = OFF;  // Alert 3107 button.
+U8      ucBtnA5Pressed            = OFF;  // Alert 17858 button.
 U8      ucBtnA1Prev               = OFF;
 U8      ucBtnA3Prev               = OFF;
 U8      ucBtnA5Prev               = OFF;
@@ -378,12 +378,12 @@ U8      ucBtnA5Prev               = OFF;
 // DTC sent by each button press (SAE J1939-73 DM1).  The occurrence count increments per press.
 //
 
-#define BTN_A1_SPN    3554
-#define BTN_A1_FMI     0   // Data valid but above normal operational range - most severe
-#define BTN_A3_SPN    3107
-#define BTN_A3_FMI     0   // Data valid but above normal operational range - most severe
-#define BTN_A5_SPN   17858
-#define BTN_A5_FMI     1   // Data valid but below normal operational range - most severe
+#define BTN_A1_SPN   111   // Engine Coolant Level 1
+#define BTN_A1_FMI     2   // Data erratic, intermittent or incorrect
+#define BTN_A3_SPN    97   // Water In Fuel Indicator 1
+#define BTN_A3_FMI     3   // Voltage above normal or shorted to high source
+#define BTN_A5_SPN   558   // Accelerator Pedal 1 Low Idle Switch
+#define BTN_A5_FMI     2   // Data erratic, intermittent or incorrect
 #define BTN_DTC_LAMP  0x10 // Amber warning lamp on (bits 6-5 = 01); MIL, red stop and protect off.
 
 U8      ucBtnA1Count              = 0;
@@ -1386,9 +1386,9 @@ U8      ucDebugPrintAnalogDigitalInputs   = FALSE;
   Serial.print( "A2 = Vehicle Speed %  = [" );  Serial.print( fA2_VehicleSpeedPercent * 100.0 )         ; Serial.println( "]" ); 
   Serial.print( "A4 = Oil Pressure  %  = [" );  Serial.print( fA4_OilPressurePercent  * 100.0 )         ; Serial.println( "]" );
   
-  Serial.print( "A1 = DTC btn (SPN 3554)  0/1 = [" );  Serial.print( ucBtnA1Pressed == ON ? "On" : "Off" ); Serial.println( "]" );
-  Serial.print( "A3 = DTC btn (SPN 3107)  0/1 = [" );  Serial.print( ucBtnA3Pressed == ON ? "On" : "Off" ); Serial.println( "]" );
-  Serial.print( "A5 = DTC btn (SPN 17858) 0/1 = [" );  Serial.print( ucBtnA5Pressed == ON ? "On" : "Off" ); Serial.println( "]" );
+  Serial.print( "A1 = DTC btn (alert 3554)  0/1 = [" );  Serial.print( ucBtnA1Pressed == ON ? "On" : "Off" ); Serial.println( "]" );
+  Serial.print( "A3 = DTC btn (alert 3107)  0/1 = [" );  Serial.print( ucBtnA3Pressed == ON ? "On" : "Off" ); Serial.println( "]" );
+  Serial.print( "A5 = DTC btn (alert 17858) 0/1 = [" );  Serial.print( ucBtnA5Pressed == ON ? "On" : "Off" ); Serial.println( "]" );
   
   Serial.println( "" );
   
