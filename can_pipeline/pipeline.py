@@ -56,7 +56,10 @@ EDITABLE = {
     "upload_enabled": (bool,),
     "after_upload": ("enum", ("delete", "archive")),
     "upload_retry_max_seconds": (int, 10, 3600),
+    "button_dtc_severity": ("enum", tuple(signals.SEVERITY_LAMP)),
 }
+# values used when config.json does not have the key yet
+DEFAULTS = {"button_dtc_severity": "critical"}
 
 
 # ----------------------------------------------------------------------------- config / state
@@ -65,6 +68,8 @@ class Config:
         self.path, self.lock = path, threading.Lock()
         with open(path, encoding="utf-8") as f:
             self.d = json.load(f)
+        for k, v in DEFAULTS.items():
+            self.d.setdefault(k, v)
 
     def get(self, k):
         with self.lock:
@@ -164,6 +169,9 @@ class Stats:
         self.recent = collections.deque(maxlen=25)
         self.watch_hist = {k: collections.deque(maxlen=3000) for k in signals.WATCH}   # key -> (time, value)
         self.buffer_warn = ""
+        self.btn_lamp_ack = None                 # lamp byte the simulator confirmed (ACK BTN LAMP), None = not yet
+        self.btn_lamp_unsupported = False        # simulator answered "ERR Unknown command: BTN LAMP ..."
+        self.last_btn_dtc = None                 # {"severity", "lamp", "spn", "fmi", "t"} of the last DM1 from the simulator
 
     def tick_second(self, frames, nbytes):
         sec = int(time.time())
@@ -477,6 +485,39 @@ class SerialReader(threading.Thread):
         self.dec = j1939.DtcDecoder(cfg.snapshot().get("extra_dtc_pgns", []))
         self.asm = j1939.MessageAssembler()
         self.oversize_seen = set()
+        self.sent_lamp = None                    # lamp byte last sent with BTN LAMP on this connection
+
+    def _sync_button_lamp(self, ser):
+        """Send BTN LAMP when the severity chosen on the dashboard differs from what this connection last sent.
+        Called from the read loop, so a reconnect (which resets the Arduino) re-sends it automatically."""
+        lamp = signals.SEVERITY_LAMP[self.cfg.get("button_dtc_severity")]
+        if lamp == self.sent_lamp:
+            return
+        ser.write(b"BTN LAMP %d\n" % lamp)
+        ser.flush()
+        self.sent_lamp = lamp
+        with STATS.lock:
+            STATS.btn_lamp_ack = None
+        log.info("Switch DTC severity -> %s: sent BTN LAMP %d (0x%02X) to the simulator",
+                 self.cfg.get("button_dtc_severity"), lamp, lamp)
+
+    def _handle_reply(self, text):
+        """Log the simulator's answer to BTN LAMP."""
+        if text.startswith("ACK BTN LAMP"):
+            try:
+                v = int(text.split()[-1])
+            except ValueError:
+                return
+            with STATS.lock:
+                STATS.btn_lamp_ack, STATS.btn_lamp_unsupported = v, False
+            log.info("Simulator confirmed switch DTC severity %s (lamp 0x%02X)", signals.lamp_severity(v), v)
+        elif text.startswith("ERR") and "BTN LAMP" in text.upper():
+            with STATS.lock:
+                first = not STATS.btn_lamp_unsupported
+                STATS.btn_lamp_unsupported = True
+            if first:
+                log.warning("Simulator firmware does not know BTN LAMP: flash the updated "
+                            "J1708J1939Simulator_live_v3.ino to change the switch DTC severity")
 
     def run(self):
         port, baud = self.cfg.get("serial_port"), self.cfg.get("baud")
@@ -508,6 +549,7 @@ class SerialReader(threading.Thread):
                 ser.flush()
             except Exception as e:
                 log.warning("Could not send LIVE ON to the simulator: %s", e)
+            self.sent_lamp = None                # the Arduino reset on open: send the severity again
             last_err = None
             try:
                 self._pump(ser)
@@ -543,6 +585,7 @@ class SerialReader(threading.Thread):
     def _pump(self, ser):
         last_warn = 0.0
         while not self.stop_ev.is_set():
+            self._sync_button_lamp(ser)
             raw = ser.readline()
             if not raw:
                 continue
@@ -553,6 +596,7 @@ class SerialReader(threading.Thread):
                 STATS.lines += 1
                 STATS.bytes += len(raw)
             if res[0] == "other":
+                self._handle_reply(text)
                 with STATS.lock:
                     STATS.other_lines += 1
                 STATS.tick_second(0, len(raw))
@@ -587,6 +631,11 @@ class SerialReader(threading.Thread):
                 STATS.recent.append({"t": time.strftime("%H:%M:%S", time.localtime(now)) + ".%03d" % (now % 1 * 1000),
                                      "id": "%08X" % cid, "prio": prio, "pgn": pgn, "sa": sa,
                                      "data": data.hex(" ").upper()})
+                if events and msg[1] == j1939.PGN_DM1 and msg[2]:
+                    lamp = msg[2][0]
+                    STATS.last_btn_dtc = {"severity": signals.lamp_severity(lamp), "lamp": "0x%02X" % lamp,
+                                          "spn": events[0]["spn"], "fmi": events[0]["fmi"],
+                                          "t": time.strftime("%H:%M:%S", time.localtime(now))}
                 for e in events:
                     STATS.dtc_total += 1
                     k = (e["kind"], e["sa"], e["spn"], e["fmi"])
@@ -698,7 +747,15 @@ def make_handler(cfg, rec):
                 dtcs = [{"switch": switch, "spn": spn, "fmi": fmi, "name": name,
                          "fmi_text": signals.FMI_TEXT.get(fmi, "")}
                         for switch, (spn, fmi, name) in signals.BUTTON_DTCS.items()]
-                return self._send(200, {"now": round(time.time(), 3), "series": ser, "dtcs": dtcs})
+                with STATS.lock:
+                    ack = STATS.btn_lamp_ack
+                    sev = {"selected": cfg.get("button_dtc_severity"), "options": list(signals.SEVERITY_LAMP),
+                           "lamps": {k: "0x%02X" % v for k, v in signals.SEVERITY_LAMP.items()},
+                           "confirmed": None if ack is None else signals.lamp_severity(ack),
+                           "unsupported": STATS.btn_lamp_unsupported,
+                           "last_received": STATS.last_btn_dtc}
+                return self._send(200, {"now": round(time.time(), 3), "series": ser, "dtcs": dtcs,
+                                        "severity": sev})
             if u.path == "/api/logs":
                 since = int(parse_qs(u.query).get("since", ["0"])[0] or 0)
                 return self._send(200, MEM.since(since))

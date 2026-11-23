@@ -45,6 +45,9 @@ td small{color:var(--mute);margin-left:4px}
 .ctlbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
 .ctlbar h2{margin:0 auto 0 0;font-size:15px}
 .ctlbar .seg{margin:0}
+.sevl{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink)}
+.sevl select{padding:5px 8px}
+.sevbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:-4px 0 12px;font-size:12px;color:var(--mute)}
 .cols{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
 .col{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;gap:10px;min-width:0}
 .colh{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
@@ -79,11 +82,14 @@ details.more main{padding:0 0 16px}
 </header>
 <section class="ctl">
   <div class="ctlbar"><h2>POTs &amp; switches</h2>
+    <label class="sevl">DTC severity on switch press
+      <select id="sev" aria-label="Severity of the DTC sent when a switch is pressed"></select></label>
     <div class="seg" role="group" aria-label="Time window" id="win">
       <button type="button" data-w="30">30 s</button><button type="button" data-w="60">1 min</button><button type="button" data-w="300">5 min</button>
     </div>
     <span class="pill" id="feed">waiting for data</span>
   </div>
+  <div class="sevbar"><span class="pill" id="sevSt">severity: -</span><span id="sevRx"></span></div>
   <div class="cols" id="cols"></div>
   <p class="fine">Only values driven by the POTs and switches are shown. The simulator sends each value about every 1.5 s. A red bar under a graph means the switch was held down; each press also sends one DM1 fault (counted under each graph).</p>
 </section>
@@ -283,15 +289,37 @@ function render(dtc){
     const i=DTCI[c.swn];
     if(!i) continue;
     const d=(dtc||[]).find(x=>x.spn===i.spn&&x.fmi===i.fmi);
-    $('dt'+c.id).innerHTML='<div>DTC on press (DM1): <b class="nm">'+esc(i.name)+'</b> &middot; SPN '+i.spn+' &middot; FMI '+i.fmi+'</div>'+
+    $('dt'+c.id).innerHTML='<div>DTC on press (DM1): <b class="nm">'+esc(i.name)+'</b> &middot; SPN '+i.spn+' &middot; FMI '+i.fmi+
+      (SEV?' &middot; severity <b class="nm">'+esc(SEV.selected)+'</b>':'')+'</div>'+
       '<div>'+esc(i.fmi_text||'')+'</div><div>'+(d?'<b>'+d.count+'</b> received, last at '+d.last:'none received yet')+'</div>';
   }
   pill($('feed'), fresh?'live':'no POT/switch data', fresh?'ok':'warn');
   draw();
 }
+// ---------------- switch DTC severity ----------------
+let SEV=null, sevBusy=false;
+function renderSeverity(v){
+  SEV=v; const sel=$('sev');
+  if(!sel.options.length) sel.innerHTML=v.options.map(o=>'<option value="'+esc(o)+'">'+esc(o)+' (lamp '+esc(v.lamps[o])+')</option>').join('');
+  if(!sevBusy && document.activeElement!==sel) sel.value=v.selected;
+  if(v.unsupported) pill($('sevSt'),'simulator firmware too old: flash the updated sketch','bad');
+  else if(v.confirmed===v.selected) pill($('sevSt'),'severity '+v.selected+' active on simulator','ok');
+  else pill($('sevSt'),'severity '+v.selected+': waiting for simulator','warn');
+  const l=v.last_received;
+  $('sevRx').textContent=l?('last DM1 received: '+l.severity+' ('+l.lamp+') SPN '+l.spn+' FMI '+l.fmi+' at '+l.t):'no DM1 received yet';
+}
+$('sev').addEventListener('change',async e=>{
+  sevBusy=true;
+  try{
+    const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({button_dtc_severity:e.target.value})});
+    if(!r.ok){ const j=await r.json(); pill($('sevSt'),'rejected: '+j.error,'bad'); }
+  }catch(err){ pill($('sevSt'),'dashboard offline','bad'); }
+  sevBusy=false; pollWatch();
+});
 async function pollWatch(){
   try{
     const r=await (await fetch('/api/watch?since='+Math.max(0,lastNow-3))).json(); lastNow=r.now; for(const d of (r.dtcs||[])) DTCI[d.switch]=d;
+    if(r.severity) renderSeverity(r.severity);
     for(const k in r.series){ const s=r.series[k]; META[k]=s; const a=DATA[k]=DATA[k]||[]; const lt=a.length?a[a.length-1][0]:0;
       for(const pt of s.points) if(pt[0]>lt) a.push(pt);
       const cut=Date.now()/1000-330; while(a.length>1&&a[0][0]<cut) a.shift(); }
