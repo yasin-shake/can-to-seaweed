@@ -278,6 +278,24 @@ BUTTON_DTCS = {
     "A3": (3107, 0, "Water in fuel"),
     "A5": (17858, 1, "Accelerator pedal 1 low idle switch"),
 }
+# Severity of the DTC each switch press sends, chosen on the dashboard -> DM1 lamp status byte.
+# J1939-73 DM1 byte 1: bits 8-7 MIL, 6-5 red stop, 4-3 amber warning, 2-1 protect (01 = lamp on).
+# Order here is the order of the dashboard drop-down.
+SEVERITY_LAMP = {
+    "critical": 0x10,   # red stop lamp      (simulator's default before this setting existed)
+    "high": 0x04,       # amber warning lamp
+    "med": 0x40,        # malfunction indicator lamp (MIL)
+    "low": 0x01,        # protect lamp
+}
+
+
+def lamp_severity(lamp):
+    """DM1 lamp status byte -> severity name from SEVERITY_LAMP, or the byte in hex if it matches none."""
+    for name, b in SEVERITY_LAMP.items():
+        if b == lamp:
+            return name
+    return "lamp 0x%02X" % lamp
+
 FMI_TEXT = {
     0: "Data valid but above normal operational range - most severe level",
     1: "Data valid but below normal operational range - most severe level",

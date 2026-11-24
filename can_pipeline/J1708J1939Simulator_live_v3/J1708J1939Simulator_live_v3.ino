@@ -99,6 +99,8 @@ const char *szDate          = "01/07/2021"                                      
 //                  The buttons no longer drive Park Brake / Brake Pedal / Clutch Pedal.  There are no
 //                  continuous DTCs any more: each button PRESS sends exactly ONE DM1 (PGN 65226) frame
 //                  carrying one DTC, and nothing is sent on release or while the button is held.
+//                  The DM1 lamp byte (severity) of these DTCs is set with the serial command
+//                  "BTN LAMP <0..255>" (default 0x10 = red stop lamp).
 //
 //                  J1708/J1587 Specific Pin Usage
 //                  ----------------------------------------------------------------------------------
@@ -384,7 +386,12 @@ U8      ucBtnA5Prev               = OFF;
 #define BTN_A3_FMI     3   // Voltage above normal or shorted to high source
 #define BTN_A5_SPN   558   // Accelerator Pedal 1 Low Idle Switch
 #define BTN_A5_FMI     2   // Data erratic, intermittent or incorrect
-#define BTN_DTC_LAMP  0x10 // Amber warning lamp on (bits 6-5 = 01); MIL, red stop and protect off.
+#define BTN_DTC_LAMP  0x10 // Default lamp byte: red stop lamp on (bits 6-5 = 01); MIL, amber and protect off.
+
+// Lamp status byte sent with each button DTC (= DTC severity).  Changed at run time with the serial
+// command "BTN LAMP <0..255>" (the pipeline dashboard sends it).  J1939-73 byte 1 layout:
+//   bits 8-7 MIL, bits 6-5 red stop, bits 4-3 amber warning, bits 2-1 protect (01 = on).
+U8      ucBtnDTCLamp              = BTN_DTC_LAMP;
 
 U8      ucBtnA1Count              = 0;
 U8      ucBtnA3Count              = 0;
@@ -980,6 +987,7 @@ U8      ucDebugPrintAnalogDigitalInputs   = FALSE;
       Serial.print( "ST DTC_ARMED " ); Serial.println( ucQADTCEnabled   ? 1 : 0 );
       Serial.print( "ST DTC_COUNT " ); Serial.println( ucQADTCCount );
       Serial.print( "ST DTC_LAMP "  ); Serial.println( ucQADTCLamp  );
+      Serial.print( "ST BTN_LAMP "  ); Serial.println( ucBtnDTCLamp );
       Serial.print( "ST SWEEP_PCT " ); Serial.println( fPercent * 100.0 );
       Serial.println( "ST END" );
       return;
@@ -1115,6 +1123,14 @@ U8      ucDebugPrintAnalogDigitalInputs   = FALSE;
     {
       ucQADTCLamp = (U8) szCmd.substring( 9 ).toInt();
       Serial.print( "ACK DTC LAMP " ); Serial.println( ucQADTCLamp );
+      return;
+    }
+
+  // BTN LAMP <0..255> - lamp status byte (severity) of the DTC sent by each switch press.
+  if( szCmd.startsWith( "BTN LAMP " ) )
+    {
+      ucBtnDTCLamp = (U8) szCmd.substring( 9 ).toInt();
+      Serial.print( "ACK BTN LAMP " ); Serial.println( ucBtnDTCLamp );
       return;
     }
 
@@ -5239,7 +5255,7 @@ unsigned long UnPackThreeByteIntegerLSB( U8 *ucIntString )
   UL ulCANID        = PGNToCANID( ulPGN, ucPRI, ucSRC, ucDST );
   U8 ucData   [ 8 ] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
-  ucData[ 0 ] = BTN_DTC_LAMP;
+  ucData[ 0 ] = ucBtnDTCLamp;
   ucData[ 1 ] = 0xFF;
   ucData[ 2 ] = (U8) (   ulSPN         & 0xFF );
   ucData[ 3 ] = (U8) ( ( ulSPN >>  8 ) & 0xFF );
