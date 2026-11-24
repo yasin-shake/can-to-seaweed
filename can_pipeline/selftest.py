@@ -3,6 +3,7 @@ import os
 import tempfile
 
 import j1939
+import local_simulator
 import mf4writer
 import pipeline as P
 from asammdf import MDF
@@ -148,4 +149,42 @@ except _Stop:
 assert "aws-chunked" not in _seen["h"].get("content-encoding", ""), _seen["h"]
 assert "x-amz-trailer" not in _seen["h"] and _seen["h"]["content-length"] == "100", _seen["h"]
 print("S3 PUT is a plain (non-chunked) request")
+
+# Check that live controls survive the same text parser and DTC decoder used by the logger.
+sim = local_simulator.Simulator()
+controls = local_simulator.control_catalog()
+assert len(controls) == len(local_simulator.CHANNELS)
+for control in controls:
+    sim.command("SET %s 16" % control["channel"], None)
+    pgn = control["pgn"]
+    payload = sim.apply_fields(pgn, b"\xff" * 8)
+    decoded = signals.decode((int(control["sa"], 16), pgn, payload))[2]
+    actual = next(s for s in decoded if s["name"] == control["name"])
+    assert actual["value"] == 16 and actual["unit"] == control["unit"] and actual["label"] == control["label"]
+    if control["channel"] == "FUEL":
+        assert payload[0] == 0xFF and payload[1] == 40
+sim.command("RESET", None)
+for _, cid, data in sim.trace:
+    parsed = P.parse_line(local_simulator.frame_line(cid, data).decode().strip())
+    assert parsed == ("frame", cid, data, j1939.parse_id(cid)[1])
+sim.command("POT A4 512", None)
+sim.command("SET OILPRESS 240", None)
+payload = sim.apply_fields(0xFEEF, b"\xff" * 8)
+assert signals.watch((0, 0xFEEF, payload)) == {"fuel_kpa": 500, "oil_kpa": 240}
+
+captured = []
+sim.broadcast = lambda cid, data: captured.append((cid, data))
+sim.command("LIVE ON", object())
+for value in (1, 1, 0, 1):
+    sim.command("SWITCH A1 %d" % value, None)
+sim.command("DTC ADD 123456 4 2", None)
+sim.command("DTC ADD 110 0", None)
+sim.send_dm1(sim.active_dtcs, sim.lamp)
+dec = j1939.DtcDecoder()
+events = [event for cid, data in captured for event in dec.feed(cid, data)]
+assert [(e["spn"], e["fmi"], e["oc"]) for e in events] == [
+    (3554, 0, 1), (3554, 0, 2), (123456, 4, 2), (110, 0, 1)]
+sim.command("RESET", None)
+assert not (sim.active_dtcs or sim.dtc_enabled or sim.overrides or sim.pots or sim.switches)
+print("Local ECU trace, live overrides, switch edges and multi-fault DM1 OK")
 print("selftest OK")

@@ -78,9 +78,9 @@ MESSAGES = {
         ("HighResTotalVehicleDistance", "High resolution total vehicle distance", 917, 0, 4, 5, 0, "m"),
         ("HighResTripDistance", "High resolution trip distance", 918, 4, 4, 5, 0, "m")]),
     0xFEFC: ("DD", "Dash Display", [
-        ("FuelLevel1", "Fuel level 1", 96, 0, 1, 0.4, 0, "%"),
-        ("FuelFilterDiffPressure", "Fuel filter differential pressure", 95, 1, 1, 2, 0, "kPa"),
-        ("OilFilterDiffPressure", "Engine oil filter differential pressure", 99, 2, 2, 0.01, 0, "kPa"),
+        ("FuelLevel1", "Fuel level 1", 96, 1, 1, 0.4, 0, "%"),
+        ("FuelFilterDiffPressure", "Fuel filter differential pressure", 95, 2, 1, 2, 0, "kPa"),
+        ("OilFilterDiffPressure", "Engine oil filter differential pressure", 99, 3, 1, 0.5, 0, "kPa"),
         ("CargoAmbientTemperature", "Cargo area ambient temperature", 169, 4, 2, T, -273, "°C"),
         ("FuelLevel2", "Fuel level 2", 38, 6, 1, 0.4, 0, "%")]),
     0xFEE9: ("LFC", "Fuel Consumption (liquid)", [

@@ -1,305 +1,54 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CAN Logger</title>
-<style>
-:root{--bg:#f5f6f8;--card:#fff;--ink:#1b1f24;--mute:#6a737d;--line:#e1e4e8;--ok:#1a7f37;--warn:#9a6700;--bad:#cf222e;--badbg:#ffebe9;--accent:#0969da}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0d1117;--card:#161b22;--ink:#e6edf3;--mute:#8b949e;--line:#30363d;--ok:#3fb950;--warn:#d29922;--bad:#ff7b72;--badbg:#3d1418;--accent:#58a6ff}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,Segoe UI,sans-serif}
-header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card)}
-h1{font-size:17px;margin:0 8px 0 0}
-.pill{padding:2px 10px;border-radius:99px;border:1px solid var(--line);font-size:12px}
-.pill.ok{color:var(--ok);border-color:var(--ok)}.pill.bad{color:var(--bad);border-color:var(--bad)}.pill.warn{color:var(--warn);border-color:var(--warn)}
-main{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));max-width:1400px;margin:auto}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;min-width:0}
-.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);margin:0 0 8px}
-.big{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums}
-.sub{color:var(--mute);font-size:12px;word-break:break-all}
-.wide{grid-column:1/-1}
-.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin:6px 0}
-.bar>i{display:block;height:100%;background:var(--accent);width:0}
-table{width:100%;border-collapse:collapse;font:12px ui-monospace,Consolas,monospace}
-th,td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
-th{color:var(--mute);font-weight:500}
-.tw{overflow-x:auto}
-#log{height:300px;overflow:auto;font:12px ui-monospace,Consolas,monospace;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px}
-#log div{white-space:pre-wrap;word-break:break-word;padding:1px 4px}
-#log .WARNING{color:var(--warn)}#log .ERROR{color:var(--bad)}
-#log .DTC{background:var(--badbg);color:var(--bad);font-weight:700;border-left:3px solid var(--bad)}
-.dtcrow td{color:var(--bad);font-weight:600}
-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:end}
-label{display:grid;gap:3px;font-size:12px;color:var(--mute)}
-input,select,button{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
-button{background:var(--accent);color:#fff;border:0;cursor:pointer}
-#msg{font-size:12px}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-bottom:8px}
-.seg button{background:var(--card);color:var(--ink);border-radius:0;border:0}
-.seg button[aria-pressed=true]{background:var(--accent);color:#fff}
-.sv{font-weight:600}.stale td{opacity:.45}.na{color:var(--mute);font-style:italic}.grp td{border-top:2px solid var(--line)}
-td small{color:var(--mute);margin-left:4px}
-
-.ctl{max-width:1400px;margin:auto;padding:16px 16px 0}
-.ctlbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
-.ctlbar h2{margin:0 auto 0 0;font-size:15px}
-.ctlbar .seg{margin:0}
-.cols{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
-.col{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;gap:10px;min-width:0}
-.colh{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
-.col h3{margin:0;font-size:15px}.col h3 small{display:block;color:var(--mute);font-weight:400;font-size:12px}
-.sw{padding:4px 12px;border-radius:99px;font-weight:700;font-size:12px;border:1px solid var(--line);color:var(--mute);white-space:nowrap}
-.sw.on{background:var(--bad);border-color:var(--bad);color:#fff}
-.sw.na{opacity:.5}
-.pot{display:grid;gap:3px}.pot .row{display:flex;justify-content:space-between;font-size:12px;color:var(--mute)}
-.pot .bar{height:12px;margin:0}.pot .bar>i{transition:width .3s}
-.vals{display:flex;flex-wrap:wrap;gap:16px}
-.val .big{font-size:30px;line-height:1.1}.val .big small{font-size:14px;color:var(--mute);margin-left:3px;font-weight:400}
-.val .lbl{font-size:12px;color:var(--mute);display:flex;align-items:center;gap:5px}
-.dot{width:10px;height:3px;border-radius:2px;display:inline-block}
-.val.stale .big{opacity:.4}.nm{color:var(--ink);font-weight:600}
-canvas{width:100%;height:210px;display:block}
-.fine{font-size:12px;color:var(--mute)}.fine b{color:var(--ink)}
-details.more{max-width:1400px;margin:16px auto 0;padding:0 16px}
-details.more>summary{cursor:pointer;font-weight:600;padding:8px 0;color:var(--mute)}
-details.more main{padding:0 0 16px}
-[hidden]{display:none!important}
-.alert{padding:8px 12px;border-radius:6px;margin-top:8px;font-size:13px;background:var(--badbg);color:var(--bad)}
-.alert.warn{background:transparent;border:1px solid var(--warn);color:var(--warn)}
-</style>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Telemetry · ECU Monitor</title><link rel="stylesheet" href="/dashboard.css"><script defer src="/dashboard.js"></script>
 </head>
 <body>
-<header>
-  <h1>CAN Logger</h1>
-  <span class="pill" id="pSerial">serial</span>
-  <span class="pill" id="pUpload">upload</span>
-  <span class="pill" id="pDtc">DTC 0</span>
-  <span class="sub" id="hdrInfo"></span>
-</header>
-<section class="ctl">
-  <div class="ctlbar"><h2>POTs &amp; switches</h2>
-    <div class="seg" role="group" aria-label="Time window" id="win">
-      <button type="button" data-w="30">30 s</button><button type="button" data-w="60">1 min</button><button type="button" data-w="300">5 min</button>
-    </div>
-    <span class="pill" id="feed">waiting for data</span>
+<a class="skip" href="#main">Skip to workspace</a>
+<aside id="sidebar">
+  <div class="brand"><span class="brandmark" data-icon="wave"></span><div>ECU Monitor<small>QA workspace</small></div></div>
+  <nav aria-label="Workspace"><div class="navlabel">Workspace</div>
+    <a href="#telemetry" data-icon="trend">Telemetry</a><a href="#controls" data-icon="sliders" hidden>Signal controls</a>
+    <a href="#faults" data-icon="fault">Fault diagnostics</a><a href="#inspector" data-icon="layers">Data inspector</a>
+    <div class="navlabel system">System</div><a href="#settings" data-icon="settings">Settings</a><a href="#logs" data-icon="logs">Activity log</a>
+  </nav>
+  <div class="sidefoot"><i class="dot" id="sideDot"></i><div id="sideSource">Waiting for input</div><code id="sideDevice"></code></div>
+</aside>
+<main id="main" tabindex="-1">
+<header class="top"><div><button id="menu" class="iconbutton" data-icon="menu" aria-controls="sidebar" aria-expanded="false" aria-label="Toggle navigation"></button><span>Workspace</span><b>/</b><strong id="crumb">Telemetry</strong></div><div><span id="connection" class="badge">Connecting</span><time id="clock"></time></div></header>
+<div class="content"><div class="titlebar"><h1 id="title">Live telemetry</h1><span class="session" id="session"></span></div>
+<p id="offline" class="error" hidden></p>
+<section data-page="telemetry">
+  <div class="metrics">
+    <div><span data-icon="wave">Frame rate</span><strong id="frameRate">—</strong><small>frames/s</small></div>
+    <div><span data-icon="layers">Decoded signals</span><strong id="signalCount">—</strong></div>
+    <div><span data-icon="disk">MF4 files written</span><strong id="fileCount">—</strong></div>
+    <div><span data-icon="fault">Fault events</span><strong id="faultCount">—</strong></div>
   </div>
-  <div class="cols" id="cols"></div>
-  <p class="fine">Only values driven by the POTs and switches are shown. The simulator sends each value about every 1.5 s. A red bar under a graph means the switch was held down; each press also sends one DM1 fault (counted under each graph).</p>
+  <div class="sectionhead"><div><h2>Signal trends</h2><span class="muted" id="chartSummary"></span></div><div class="toolbar">
+    <div class="seg" id="window" aria-label="Time window"><button data-seconds="30">30 s</button><button data-seconds="60" aria-pressed="true">1 min</button><button data-seconds="300">5 min</button></div>
+    <label class="check"><input type="checkbox" id="smooth" checked> Smoothed</label><button id="choose" data-icon="sliders">Choose signals</button>
+  </div></div>
+  <div id="charts" class="chartgrid"></div><p id="emptyCharts" class="empty">Waiting for decoded telemetry…</p>
 </section>
-<details class="more"><summary>Logger status, DTC table, raw frames, log &amp; settings</summary>
-<main>
-  <section class="card"><h2>Session</h2><div class="big" id="session">-</div><div class="sub" id="device"></div><div class="sub" id="uptime"></div></section>
-  <section class="card"><h2>CAN frames</h2><div class="big" id="fTotal">0</div><div class="sub"><span id="fRate">0</span> frames/s &middot; this session <span id="fSess">0</span></div></section>
-  <section class="card"><h2>Current file</h2><div id="curName" style="font:600 15px ui-monospace,Consolas,monospace">-</div>
-    <div class="bar"><i id="curBar"></i></div><div class="sub" id="curInfo">waiting for frames</div></section>
-  <section class="card"><h2>Files</h2><div class="big"><span id="fWritten">0</span> <span class="sub">written</span></div>
-    <div class="sub"><span id="fUp">0</span> uploaded &middot; <span id="fPend">0</span> pending in spool</div><div class="sub" id="lastUp"></div></section>
-
-  <section class="card wide"><h2>Serial link &amp; upload health</h2>
-    <div class="sub" id="serialInfo"></div>
-    <div class="bar"><i id="utilBar"></i></div>
-    <div id="alerts"></div>
-    <div class="sub" id="uploadInfo" style="margin-top:6px"></div>
-  </section>
-
-  <section class="card wide"><h2>DTCs seen (DM1 / DM2)</h2>
-    <div class="tw"><table><thead><tr><th>type</th><th>source</th><th>SPN</th><th>FMI</th><th>OC</th><th>times seen</th><th>last</th></tr></thead><tbody id="dtcBody"><tr><td colspan="7" class="sub">none yet</td></tr></tbody></table></div></section>
-
-  <section class="card wide"><h2>Log</h2><div id="log"></div></section>
-
-  <section class="card wide"><h2>Live data</h2>
-    <div class="seg" role="group" aria-label="View">
-      <button type="button" id="vRaw" aria-pressed="true">Raw frames</button>
-      <button type="button" id="vDec" aria-pressed="false">Decoded signals</button>
-    </div>
-    <div id="rawView" class="tw"><table><thead><tr><th>time</th><th>CAN ID</th><th>prio</th><th>PGN</th><th>SA</th><th>data</th></tr></thead><tbody id="frames"></tbody></table></div>
-    <div id="decView" class="tw" hidden>
-      <div class="sub" id="decSummary" style="margin:6px 0"></div>
-      <table><thead><tr><th>message</th><th>source</th><th>signal</th><th>value</th><th>SPN</th><th>seen</th><th>updated</th></tr></thead><tbody id="sigs"></tbody></table>
-      <h2 style="margin-top:14px">Seen but not decoded (no signal definition)</h2>
-      <table><thead><tr><th>PGN</th><th>source</th><th>kind</th><th>length</th><th>last data</th><th>seen</th></tr></thead><tbody id="undec"></tbody></table>
-    </div></section>
-
-  <section class="card wide"><h2>Settings (applied live, saved to config.json)</h2>
-    <form id="cfg">
-      <label>File duration (seconds)<input name="file_seconds" type="number"></label>
-      <label>Max data per file (KB)<input name="file_max_kb" type="number"></label>
-      <label>After upload<select name="after_upload"><option>delete</option><option>archive</option></select></label>
-      <label>Max retry delay (s)<input name="upload_retry_max_seconds" type="number"></label>
-      <label>Upload to S3<select name="upload_enabled"><option value="false">off</option><option value="true">on</option></select></label>
-      <button type="submit">Save</button>
-    </form>
-    <div id="msg" class="sub"></div>
-    <div class="sub">A file closes when either the duration or the size limit is reached. The size limit counts logged frame data (20 bytes per frame); every file also carries a fixed ~104 KB header, as CANedge files do, so the uploaded file is about 104 KB larger. Port, baud, bucket and device ID are set in config.json (restart required).</div>
-  </section>
-</main>
-</details>
-<script>
-const $=id=>document.getElementById(id);
-const fmt=n=>Number(n).toLocaleString();
-const kb=b=>b>=1048576?(b/1048576).toFixed(2)+' MB':(b/1024).toFixed(1)+' KB';
-const dur=s=>{s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return (h?h+'h ':'')+(m?m+'m ':'')+(s%60)+'s'};
-let logSince=0, formDirty=false;
-$('cfg').addEventListener('input',()=>formDirty=true);
-
-function pill(el,text,cls){el.textContent=text;el.className='pill '+cls}
-async function refresh(){
-  let s; try{ s=await (await fetch('/api/status')).json(); }catch(e){ pill($('pSerial'),'dashboard offline','bad'); return; }
-  $('session').textContent=String(s.session).padStart(8,'0');
-  $('device').textContent='device '+s.device_id;
-  $('uptime').textContent='up '+dur(s.uptime);
-  $('fTotal').textContent=fmt(s.frames.total); $('fRate').textContent=s.frames.rate; $('fSess').textContent=fmt(s.frames.session);
-  const c=s.current_file;
-  if(c){ const limS=s.config.file_seconds, limB=s.config.file_max_kb*1024+s.header_bytes;
-    const pct=Math.min(100,Math.max(c.elapsed/limS,c.est_bytes/limB)*100);
-    $('curName').textContent=c.name; $('curBar').style.width=pct+'%';
-    $('curInfo').textContent=fmt(c.frames)+' frames · ~'+kb(c.est_bytes)+' of '+kb(limB)+' · '+Math.round(c.elapsed)+'s of '+limS+'s'+(c.dtc?(' · '+c.dtc+' DTC msg'):'');
-  } else { $('curName').textContent='-'; $('curBar').style.width='0'; $('curInfo').textContent='waiting for frames'; }
-  $('fWritten').textContent=s.files.written; $('fUp').textContent=s.files.uploaded; $('fPend').textContent=s.files.pending;
-  $('lastUp').textContent=s.upload.last?('last upload '+s.upload.last):'';
-  const se=s.serial;
-  pill($('pSerial'), se.connected?('serial '+se.port+' @ '+se.baud):'serial DISCONNECTED', se.connected?'ok':'bad');
-  const up=s.upload;
-  pill($('pUpload'),'upload: '+up.state, up.error?'bad':(up.gate?'warn':'ok'));
-  pill($('pDtc'),'DTC '+s.dtc.total, s.dtc.total?'bad':'ok');
-  $('hdrInfo').textContent=s.dtc.last?('last DTC: '+s.dtc.last):'';
-  $('serialInfo').textContent=se.port+' @ '+se.baud+' baud · '+fmt(se.lines)+' lines · '+se.bytes_per_sec+' B/s of '+Math.round(se.baud/10)+' B/s ('+se.utilization_pct+'% of link) · malformed lines '+se.bad_lines;
-  $('utilBar').style.width=Math.min(100,se.utilization_pct)+'%';
-  let al='';
-  if(!se.connected) al+='<div class="alert">Serial port not connected: '+(se.error||'')+'</div>';
-  if(se.utilization_pct>=70) al+='<div class="alert warn">Serial link is '+se.utilization_pct+'% full at '+se.baud+' baud. Bursts will overrun it and drop frames; raise the baud rate or reduce the line format.</div>';
-  if(se.bad_lines>0) al+='<div class="alert warn">'+se.bad_lines+' malformed/truncated line(s) received: frames were probably dropped on the serial link.</div>';
-  if(se.oversize_lines>0) al+='<div class="alert warn">'+fmt(se.oversize_lines)+' line(s) carried more than 8 data bytes (not a valid classic CAN frame) and were NOT recorded.</div>';
-  if(up.error) al+='<div class="alert">Upload error ('+up.failures+' consecutive): '+up.error.replace(/[<>&]/g,'')+'</div>';
-  $('alerts').innerHTML=al;
-  $('uploadInfo').textContent='Target '+up.target+(up.gate?'  |  not uploading: '+up.gate:'');
-  const rows=s.dtc.seen.map(d=>'<tr class="dtcrow"><td>'+d.kind+'</td><td>'+d.sa+'</td><td>'+d.spn+(d.name?' <small>'+esc(d.name)+'</small>':'')+'</td><td>'+d.fmi+(d.fmi_text?' <small>'+esc(d.fmi_text)+'</small>':'')+'</td><td>'+d.oc+'</td><td>'+fmt(d.count)+'</td><td>'+d.last+'</td></tr>').join('');
-  window.__dtc=s.dtc.seen.filter(d=>d.kind==='DM1');
-  $('dtcBody').innerHTML=rows||'<tr><td colspan="7" class="sub">none yet</td></tr>';
-  $('frames').innerHTML=s.recent.map(f=>'<tr><td>'+f.t+'</td><td>'+f.id+'</td><td>'+f.prio+'</td><td>'+f.pgn+' (0x'+f.pgn.toString(16).toUpperCase()+')</td><td>0x'+f.sa.toString(16).toUpperCase().padStart(2,'0')+'</td><td>'+f.data+'</td></tr>').join('');
-  renderSignals(s);
-  if(!formDirty){ for(const k in s.config){ const el=$('cfg').elements[k]; if(el) el.value=String(s.config[k]); } }
-}
-const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-function setView(v){
-  $('rawView').hidden=v!=='dec'?false:true; $('decView').hidden=v==='dec'?false:true;
-  $('vRaw').setAttribute('aria-pressed',v!=='dec'); $('vDec').setAttribute('aria-pressed',v==='dec');
-  try{localStorage.setItem('view',v)}catch(e){}
-}
-$('vRaw').onclick=()=>setView('raw'); $('vDec').onclick=()=>setView('dec');
-try{setView(localStorage.getItem('view')==='dec'?'dec':'raw')}catch(e){setView('raw')}
-function fmtVal(x){
-  if(x.status) return '<span class="na">'+({'N/A':'not available','error':'error','reserved':'reserved'}[x.status]||x.status)+'</span>';
-  if(typeof x.value==='number') return '<span class="sv">'+x.value.toLocaleString(undefined,{maximumFractionDigits:3})+'</span>'+(x.unit?'<small>'+esc(x.unit)+'</small>':'');
-  return '<span class="sv">'+esc(x.value)+'</span>';
-}
-function renderSignals(s){
-  const L=s.signals||[];
-  $('decSummary').textContent=L.length+' signals decoded from '+new Set(L.map(x=>x.msg+x.sa)).size+' messages · '+(s.dbc?('DBC: '+s.dbc.name+' ('+s.dbc.messages+' messages)'):'built-in signal table (no DBC loaded)');
-  let last='',h='';
-  for(const x of L){
-    const g=x.msg+x.sa, first=g!==last; last=g;
-    h+='<tr class="'+(first?'grp ':'')+(x.age>5?'stale':'')+'"><td>'+(first?'<b>'+esc(x.msg)+'</b><small>'+esc(x.msg_desc)+'</small>':'')+'</td><td>'+(first?x.sa:'')+'</td><td>'+esc(x.label)+'<small>'+esc(x.name)+'</small></td><td>'+fmtVal(x)+'</td><td>'+x.spn+'</td><td>'+fmt(x.count)+'</td><td>'+(x.age<1.5?'now':dur(x.age)+' ago')+'</td></tr>';
-  }
-  $('sigs').innerHTML=h||'<tr><td colspan="7" class="sub">no decodable messages yet</td></tr>';
-  $('undec').innerHTML=(s.undecoded||[]).map(u=>'<tr><td>'+u.pgn+' (0x'+u.pgn.toString(16).toUpperCase()+')</td><td>'+u.sa+'</td><td>'+esc(u.name)+'</td><td>'+u.length+'</td><td>'+esc(u.data)+'</td><td>'+fmt(u.count)+'</td></tr>').join('')||'<tr><td colspan="6" class="sub">none</td></tr>';
-}
-async function logs(){
-  try{
-    const r=await (await fetch('/api/logs?since='+logSince)).json(); if(!r.length) return;
-    const box=$('log'), stick=box.scrollTop+box.clientHeight>=box.scrollHeight-30;
-    for(const l of r){ logSince=Math.max(logSince,l.id); const d=document.createElement('div'); d.className=l.level; d.textContent=l.t+' '+l.level.padEnd(7)+' '+l.msg; box.appendChild(d); }
-    while(box.children.length>600) box.removeChild(box.firstChild);
-    if(stick) box.scrollTop=box.scrollHeight;
-  }catch(e){}
-}
-$('cfg').addEventListener('submit',async e=>{
-  e.preventDefault(); const f=e.target.elements;
-  const body={file_seconds:+f.file_seconds.value,file_max_kb:+f.file_max_kb.value,after_upload:f.after_upload.value,
-    upload_retry_max_seconds:+f.upload_retry_max_seconds.value,upload_enabled:f.upload_enabled.value==='true'};
-  const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const j=await r.json(); $('msg').textContent=r.ok?'Saved.':('Rejected: '+j.error); $('msg').style.color=r.ok?'var(--ok)':'var(--bad)';
-  if(r.ok) formDirty=false; refresh();
-});
-
-// ---------------- POT / switch panel ----------------
-const COLS=[
- {id:'A0',title:'POT A0 · Engine Speed',sub:'drives Intake manifold pressure',pot:'pot_A0',sw:'sw_A1',swn:'A1',lines:['intake_kpa']},
- {id:'A2',title:'POT A2 · Vehicle Speed',sub:'drives Engine coolant temperature',pot:'pot_A2',sw:'sw_A3',swn:'A3',lines:['coolant_c']},
- {id:'A4',title:'POT A4 · Oil Pressure',sub:'drives Fuel delivery and Oil pressure',pot:'pot_A4',sw:'sw_A5',swn:'A5',lines:['fuel_kpa','oil_kpa']}];
-const COLORS=['#0969da','#d1630a'];
-let META={}, DATA={}, DTCI={}, win=60, lastNow=0;
-try{win=+localStorage.getItem('win')||60}catch(e){}
-$('cols').innerHTML=COLS.map(c=>`<div class="col">
-  <div class="colh"><h3>${c.title}<small>${c.sub}</small></h3><span class="sw na" id="sw${c.id}">${c.swn} -</span></div>
-  <div class="pot"><div class="row"><span>POT position</span><span id="pt${c.id}">-</span></div><div class="bar"><i id="pb${c.id}"></i></div></div>
-  <div class="vals" id="vals${c.id}"></div>
-  <canvas id="cv${c.id}"></canvas>
-  <div class="fine" id="dt${c.id}"></div></div>`).join('');
-function setWin(w){win=w;try{localStorage.setItem('win',w)}catch(e){}
-  document.querySelectorAll('#win button').forEach(b=>b.setAttribute('aria-pressed',+b.dataset.w===w)); draw();}
-document.querySelectorAll('#win button').forEach(b=>b.onclick=()=>setWin(+b.dataset.w));
-const last=k=>{const a=DATA[k];return a&&a.length?a[a.length-1]:null};
-const cssv=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-function drawChart(c){
-  const cv=$('cv'+c.id), dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight;
-  if(!W||!META[c.lines[0]]) return;
-  if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr)}
-  const g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
-  const now=Date.now()/1000, t0=now-win, L=44,R=8,T=8,B=34, pw=W-L-R, ph=H-T-B;
-  const lo=Math.min(...c.lines.map(k=>META[k].min)), hi=Math.max(...c.lines.map(k=>META[k].max));
-  const X=t=>L+(t-t0)/win*pw, Y=v=>T+ph-(v-lo)/(hi-lo)*ph;
-  g.font='11px system-ui,sans-serif';g.fillStyle=cssv('--mute');g.strokeStyle=cssv('--line');g.lineWidth=1;g.textAlign='right';
-  for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4,y=Math.round(Y(v))+.5;g.beginPath();g.moveTo(L,y);g.lineTo(W-R,y);g.stroke();g.fillText(Math.round(v),L-6,y+4)}
-  g.textAlign='center';
-  for(let i=0;i<=4;i++){g.fillText(i===4?'now':'-'+Math.round(win-win*i/4)+'s',X(t0+win*i/4),T+ph+14)}
-  c.lines.forEach((k,i)=>{
-    const a=DATA[k]||[]; g.strokeStyle=COLORS[i];g.lineWidth=2;g.setLineDash(i?[6,4]:[]);g.beginPath();let pen=false;
-    for(const [t,v] of a){ if(t<t0-30) continue; if(v==null){pen=false;continue}
-      const x=Math.max(L,X(t)),y=Y(v); if(!pen){g.moveTo(x,y);pen=true}else g.lineTo(x,y)}
-    g.stroke(); g.setLineDash([]);
-    g.fillStyle=COLORS[i];
-    for(const [t,v] of a){ if(v!=null&&t>=t0){g.beginPath();g.arc(X(t),Y(v),2.4,0,7);g.fill()} }
-  });
-  const sy=T+ph+20; g.fillStyle=cssv('--line');g.fillRect(L,sy,pw,8);
-  const s=DATA[c.sw]||[]; g.fillStyle=cssv('--bad');
-  for(let i=0;i<s.length;i++){ if(!s[i][1]) continue; const ta=Math.max(s[i][0],t0), tb=Math.min(i+1<s.length?s[i+1][0]:now,now);
-    if(tb>t0) g.fillRect(X(ta),sy,Math.max(3,X(tb)-X(ta)),8)}
-  g.textAlign='left';g.fillStyle=cssv('--mute');g.fillText(c.swn,2,sy+8);
-}
-const draw=()=>COLS.forEach(drawChart);
-function render(dtc){
-  const now=Date.now()/1000; let fresh=false;
-  for(const c of COLS){
-    const p=last(c.pot), s=last(c.sw);
-    if(p){ $('pt'+c.id).textContent=p[1]+' / 1023  ('+(p[1]/10.23).toFixed(0)+'%)'; $('pb'+c.id).style.width=(p[1]/10.23)+'%'; if(now-p[0]<5) fresh=true; }
-    const sw=$('sw'+c.id);
-    if(s&&now-s[0]<5){sw.textContent=c.swn+(s[1]?' PRESSED':' released');sw.className='sw'+(s[1]?' on':'')}
-    else{sw.textContent=c.swn+' -';sw.className='sw na'}
-    $('vals'+c.id).innerHTML=c.lines.map((k,i)=>{const m=META[k]||{},l=last(k),old=!l||now-l[0]>5;
-      return '<div class="val'+(old?' stale':'')+'"><div class="big">'+(l&&l[1]!=null?l[1].toLocaleString(undefined,{maximumFractionDigits:1}):'-')+'<small>'+esc(m.unit||'')+'</small></div>'+
-      '<div class="lbl"><span class="dot" style="background:'+COLORS[i]+'"></span><span><b class="nm">'+esc(m.name||m.label||k)+'</b><br>'+esc(m.label||k)+'</span></div></div>'}).join('');
-    const i=DTCI[c.swn];
-    if(!i) continue;
-    const d=(dtc||[]).find(x=>x.spn===i.spn&&x.fmi===i.fmi);
-    $('dt'+c.id).innerHTML='<div>DTC on press (DM1): <b class="nm">'+esc(i.name)+'</b> &middot; SPN '+i.spn+' &middot; FMI '+i.fmi+'</div>'+
-      '<div>'+esc(i.fmi_text||'')+'</div><div>'+(d?'<b>'+d.count+'</b> received, last at '+d.last:'none received yet')+'</div>';
-  }
-  pill($('feed'), fresh?'live':'no POT/switch data', fresh?'ok':'warn');
-  draw();
-}
-async function pollWatch(){
-  try{
-    const r=await (await fetch('/api/watch?since='+Math.max(0,lastNow-3))).json(); lastNow=r.now; for(const d of (r.dtcs||[])) DTCI[d.switch]=d;
-    for(const k in r.series){ const s=r.series[k]; META[k]=s; const a=DATA[k]=DATA[k]||[]; const lt=a.length?a[a.length-1][0]:0;
-      for(const pt of s.points) if(pt[0]>lt) a.push(pt);
-      const cut=Date.now()/1000-330; while(a.length>1&&a[0][0]<cut) a.shift(); }
-    render(window.__dtc);
-  }catch(e){}
-}
-setWin(win); pollWatch(); setInterval(pollWatch,1000); window.addEventListener('resize',draw);
-refresh(); logs(); setInterval(refresh,1000); setInterval(logs,1000);
-</script>
-</body>
-</html>
+<section data-page="controls" hidden><div class="sectionhead"><p>Set an engineering value and check the decoded reading.</p><button id="reset" data-icon="reset">Restore baseline</button></div><div id="controls" class="controlgrid"></div><output id="controlMsg" aria-live="polite"></output></section>
+<section data-page="faults" hidden><div id="faultControls" class="panel" hidden><h2>Inject a fault</h2>
+  <form id="faultForm" class="fields"><label>SPN<input name="spn" type="number" min="1" max="524286" value="110" required></label><label>FMI<input name="fmi" type="number" min="0" max="31" value="0" required></label><label>Occurrence count<input name="oc" type="number" min="0" max="126" value="1" required></label><label>Transmission<select name="mode"><option value="FAULT">Send once</option><option value="DTC ADD">Repeat each cycle</option></select></label><button class="primary">Send fault</button></form>
+  <div class="actions"><button id="clearFaults">Clear recurring faults</button><output id="faultMsg" aria-live="polite"></output></div></div>
+  <div class="panel"><h2>Received fault events</h2><div id="faultTable"></div></div></section>
+<section data-page="inspector" hidden><div class="panel"><div class="sectionhead"><div id="inspectTabs" class="seg"><button data-tab="signals" aria-pressed="true">Decoded signals</button><button data-tab="frames">Raw frames</button><button data-tab="unknown">Undecoded</button></div>
+  <input type="search" id="inspectQuery" aria-label="Filter decoded signals" placeholder="Find name, label or SPN"></div><div id="inspectorTable"></div></div></section>
+<section data-page="settings" hidden><div class="split"><div class="panel"><h2>Capture &amp; upload</h2><form id="settingsForm" class="settingsForm">
+  <label>File duration (seconds)<input type="number" name="file_seconds" required></label><label>Frame data per file (KB)<input type="number" name="file_max_kb" required></label>
+  <label>Upload to S3<select name="upload_enabled"><option value="false">Off</option><option value="true">On</option></select></label>
+  <label>After upload<select name="after_upload"><option value="delete">Delete local copy</option><option value="archive">Archive local copy</option></select></label>
+  <label>Maximum retry delay (seconds)<input type="number" name="upload_retry_max_seconds" required></label>
+  <div class="actions"><button class="primary">Save settings</button><output id="settingsMsg" aria-live="polite"></output></div></form></div>
+  <div class="panel"><h2>Connection &amp; recording</h2><dl id="health"></dl></div></div></section>
+<section data-page="logs" hidden><div class="panel"><h2>Logger activity</h2><div id="logTable"></div></div></section>
+</div></main>
+<dialog id="picker"><form method="dialog" id="pickerForm"><div class="dialoghead"><div><h2>Choose signals</h2><span class="muted" id="selectionCount"></span></div><button type="button" id="cancelPick" aria-label="Close" class="iconbutton" data-icon="close"></button></div>
+<input type="search" id="pickQuery" aria-label="Search signals" placeholder="Search decoded name, label or SPN">
+<div id="choices"></div><div class="dialogfoot"><button id="defaults" type="button">Use defaults</button><button id="applyPick" class="primary">Apply selection</button></div></form></dialog>
+</body></html>
