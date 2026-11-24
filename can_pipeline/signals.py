@@ -179,7 +179,7 @@ class DbcDecoder:
                 spn = 0
             val = None
             if not st:
-                val = round(float(v.phys_value), 4)
+                val = round(float(v.phys_value), 7 if name == "Latitude" else 4)
                 if val == int(val) and abs(val) < 1e15:
                     val = int(val)
             out.append({"name": name, "label": label[:80], "spn": spn, "value": val,
@@ -213,7 +213,7 @@ def decode(msg):
                 continue
             raw = int.from_bytes(data[b:b + n], "little")
             st = _status(raw, n)
-            val = None if st else round(raw * scale + off, 4)
+            val = None if st else round(raw * scale + off, 7 if key == "Latitude" else 4)
             out.append({"name": key, "label": label, "spn": spn, "value": val, "unit": unit, "status": st})
         return d[0], d[1], out
     t = TEXT_MESSAGES.get(pgn)

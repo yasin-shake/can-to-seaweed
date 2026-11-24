@@ -50,7 +50,7 @@ For scripted QA, run the same operations in a second PowerShell window. Successf
 .\.venv\Scripts\python.exe .\can_pipeline\local_simulator.py --send RESET
 ```
 
-Other commands include `DTC ADD <spn> <fmi> [oc]`, `DTC LAMP <0..255>`, `DTC OFF`, `DTC ON` and `DTC CLEAR`. Engineering channel names are `COOLANT`, `OILPRESS`, `BOOST`, `VOLT`, `TRANSOIL`, `AMBIENT`, `FUEL`, `RPM` and `SPEED`.
+Other commands include `DTC ADD <spn> <fmi> [oc]`, `DTC LAMP <0..255>`, `DTC OFF`, `DTC ON` and `DTC CLEAR`. The original engineering channel names are `COOLANT`, `OILPRESS`, `BOOST`, `VOLT`, `TRANSOIL`, `AMBIENT`, `FUEL`, `RPM` and `SPEED`. For the added telemetry controls, use the signal's DBC identifier, for example `SET TransmissionClutch1Pressure 512`. Search Signal controls by identifier, label or SPN.
 
 ## 4. Stop and collect the recording
 

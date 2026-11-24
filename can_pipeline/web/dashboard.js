@@ -12,10 +12,10 @@ for (const el of document.querySelectorAll('[data-icon]')) {
   el.insertAdjacentHTML('afterbegin','<svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="'+paths[el.dataset.icon]+'"/></svg>');
 }
 const esc = v => String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const number = v => typeof v==='number' ? v.toLocaleString(undefined,{maximumFractionDigits:4}) : v;
+const number = (v,digits=4) => typeof v==='number' ? v.toLocaleString(undefined,{maximumFractionDigits:digits}) : v;
 const keyOf = s => [s.sa,s.pgn,s.name].join('/');
 const unitOf = s => s.unit?.toLowerCase()==='rpm' ? 'RPM' : s.unit || '';
-const valueOf = s => s?.status || (s?.value == null ? 'No reading' : String(number(s.value)));
+const valueOf = s => s?.status || (s?.value == null ? 'No reading' : String(number(s.value,s.name==='Latitude'?7:4)));
 const reading = s => esc(valueOf(s)) + (unitOf(s)?'<small>'+esc(unitOf(s))+'</small>':'') +
   (s.age>5?'<span class="stale">Last seen '+esc(number(Math.floor(s.age)))+' s ago</span>':'');
 const identifier = s => '<code class="ident">'+esc(s.name)+'</code>';
@@ -44,6 +44,8 @@ function route(){
   $('menu').setAttribute('aria-expanded','false'); window.scrollTo(0,0);
   if(statusData) render();
   if(page==='controls' && editChannel){
+    $('controlQuery').value='';
+    filterControls();
     const input=$('value-'+editChannel);
     if(input){input.focus();input.select();}
   }
@@ -180,12 +182,22 @@ function buildControls(){
   if(signature===controlSignature)return;
   controlSignature=signature;
   const order=['RPM','SPEED','COOLANT','OILPRESS','BOOST','VOLT','TRANSOIL','FUEL','AMBIENT'];
-  $('controls').innerHTML=catalog.slice().sort((a,b)=>order.indexOf(a.channel)-order.indexOf(b.channel)).map(c=>{
+  const rank=c=>order.includes(c.channel)?order.indexOf(c.channel):order.length;
+  $('controls').innerHTML=catalog.slice().sort((a,b)=>rank(a)-rank(b)||a.label.localeCompare(b.label)).map(c=>{
     const id=esc(c.channel),unit=esc(unitOf(c)),measured=live.get(keyOf(c))?.value;
     const start=Number.isFinite(measured)?measured:'';
-    return '<form class="ctrl" data-channel="'+id+'"><h3>'+esc(c.label)+'</h3>'+identifier(c)+'<div class="reading"></div><span class="muted">Decoded value · '+esc(pointID(c))+'</span><input type="range" aria-label="'+esc(c.label)+' target" min="'+c.min+'" max="'+c.max+'" step="'+c.step+'" value="'+start+'"><div class="rangeEnds"><span>'+c.min+' '+unit+'</span><span>'+c.max+' '+unit+'</span></div><div class="entry"><label>Target value ('+unit+')<input id="value-'+id+'" name="target" type="number" min="'+c.min+'" max="'+c.max+'" step="any" placeholder="Enter value" value="'+start+'" required></label><button class="primary">Apply</button></div><output aria-live="polite"></output></form>';
+    const targetLabel=unit?'Target value ('+unit+')':'Target value';
+    return '<form class="ctrl" data-channel="'+id+'"><h3>'+esc(c.label)+'</h3>'+identifier(c)+'<div class="reading"></div><span class="muted">Decoded value · '+esc(pointID(c))+'</span><input type="range" aria-label="'+esc(c.label)+' target" min="'+c.min+'" max="'+c.max+'" step="'+c.step+'" value="'+start+'"><div class="rangeEnds"><span>'+c.min+' '+unit+'</span><span>'+c.max+' '+unit+'</span></div><div class="entry"><label>'+targetLabel+'<input id="value-'+id+'" name="target" type="number" min="'+c.min+'" max="'+c.max+'" step="any" placeholder="Enter value" value="'+start+'" required></label><button class="primary">Apply</button></div><output aria-live="polite"></output></form>';
   }).join('');
+  filterControls();
 }
+function filterControls(){
+  const query=$('controlQuery').value;
+  const visible=new Set(catalog.filter(c=>matches(c,query)).map(c=>c.channel));
+  for(const form of $('controls').children)form.hidden=!visible.has(form.dataset.channel);
+  $('noControls').hidden=visible.size>0;
+}
+$('controlQuery').oninput=filterControls;
 $('controls').oninput=e=>{
   const form=e.target.closest('form');if(!form)return;
   const target=form.elements.target,slider=form.querySelector('[type=range]');

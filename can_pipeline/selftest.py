@@ -2,6 +2,7 @@
 import json
 import os
 import tempfile
+from math import isclose
 
 import j1939
 import local_simulator
@@ -280,21 +281,49 @@ sim = local_simulator.Simulator()
 controls = local_simulator.control_catalog()
 assert len(controls) == len(local_simulator.CHANNELS)
 for control in controls:
-    sim.command("SET %s 16" % control["channel"], None)
-    pgn = control["pgn"]
-    payload = sim.apply_fields(pgn, b"\xff" * 8)
-    decoded = signals.decode((int(control["sa"], 16), pgn, payload))[2]
+    channel = control["channel"]
+    field = local_simulator.CHANNELS[channel]
+    if channel in local_simulator.LEGACY_CHANNELS:
+        value = 16
+    elif field.size < 8:
+        value = 1
+    else:
+        value = (field.low + field.high) / 2
+    raw = round((value - field.offset) / field.scale)
+    quantized = raw * field.scale + field.offset
+    sim.command(f"SET {channel} {value}", None)
+    pgn, sa = control["pgn"], int(control["sa"], 16)
+    payload = sim.apply_fields(pgn, sa, b"\xff" * 8)
+    decoded = signals.decode((sa, pgn, payload))[2]
     actual = next(s for s in decoded if s["name"] == control["name"])
-    assert actual["value"] == 16 and actual["unit"] == control["unit"] and actual["label"] == control["label"]
-    if control["channel"] == "FUEL":
+    assert isclose(actual["value"], quantized, abs_tol=0.00005), (channel, actual, quantized)
+    assert actual["unit"] == control["unit"] and actual["label"] == control["label"]
+    if channel == "FUEL":
         assert payload[0] == 0xFF and payload[1] == 40
 sim.command("RESET", None)
+sim.command("SET EnginePtoGovernorEnableSwitch 1", None)
+sim.command("SET ERtPtGvPpdSpdCtSwt 0", None)
+sim.command("SET PowerTakeoffSpeed 5375.875", None)
+pto = sim.apply_fields(0xFEF0, 0, b"\xff" * 8)
+assert pto == bytes.fromhex("ffffa7fffff1ffff")
+sim.command("SET TrnsmssnOlLvl1CntdwnTmr 4", None)
+sim.command("SET TrnsmssnOlLvl1MsrmntStts 3", None)
+assert sim.apply_fields(0xFEF8, 3, bytes(8))[-1] == 0x34
+assert sim.apply_fields(0xFEF8, 0, bytes(8)) == bytes(8)
+sim.command("SET Latitude -12.3456789", None)
+latitude = next(data for _, cid, data in sim.trace if j1939.parse_id(cid)[1:3] == (0xFEF3, 0x4A))
+position = sim.apply_fields(0xFEF3, 0x4A, latitude)
+assert position[4:] == latitude[4:]
+assert next(s["value"] for s in signals.decode((0x4A, 0xFEF3, position))[2]
+            if s["name"] == "Latitude") == -12.3456789
+sim.command("RESET", None)
+assert sim.apply_fields(0xFEF3, 0x4A, latitude) == latitude
 for _, cid, data in sim.trace:
     parsed = P.parse_line(local_simulator.frame_line(cid, data).decode().strip())
     assert parsed == ("frame", cid, data, j1939.parse_id(cid)[1])
 sim.command("POT A4 512", None)
 sim.command("SET OILPRESS 240", None)
-payload = sim.apply_fields(0xFEEF, b"\xff" * 8)
+payload = sim.apply_fields(0xFEEF, 0, b"\xff" * 8)
 assert signals.watch((0, 0xFEEF, payload)) == {"fuel_kpa": 500, "oil_kpa": 240}
 
 captured = []

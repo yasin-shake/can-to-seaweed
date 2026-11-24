@@ -32,7 +32,7 @@
   </div></div>
   <div id="charts" class="chartgrid"></div><p id="emptyCharts" class="empty">Waiting for decoded telemetry…</p>
 </section>
-<section data-page="controls" hidden><div class="sectionhead"><p>Set an engineering value and check the decoded reading.</p><button id="reset" data-icon="reset">Restore baseline</button></div><div id="controls" class="controlgrid"></div><output id="controlMsg" aria-live="polite"></output></section>
+<section data-page="controls" hidden><div class="sectionhead"><input id="controlQuery" type="search" aria-label="Search signal controls" placeholder="Search by signal name or SPN"><button id="reset" data-icon="reset">Restore baseline</button></div><div id="controls" class="controlgrid"></div><p id="noControls" class="empty" hidden>No matching signals.</p><output id="controlMsg" aria-live="polite"></output></section>
 <section data-page="faults" hidden><div id="faultControls" class="panel" hidden><h2>Inject a fault</h2>
   <form id="faultForm" class="fields"><label>SPN<input name="spn" type="number" min="1" max="524286" value="110" required></label><label>FMI<input name="fmi" type="number" min="0" max="31" value="0" required></label><label>Occurrence count<input name="oc" type="number" min="0" max="126" value="1" required></label><label>Transmission<select name="mode"><option value="FAULT">Send once</option><option value="DTC ADD">Repeat each cycle</option></select></label><button class="primary">Send fault</button></form>
   <div class="actions"><button id="clearFaults">Clear recurring faults</button><output id="faultMsg" aria-live="polite"></output></div></div>
