@@ -7,6 +7,7 @@
   "upload_enabled": true,
   "upload_retry_max_seconds": 300,
   "after_upload": "delete",
+  "button_dtc_severity": "critical",
   "archive_dir": "archive",
   "endpoint_url": "https://digiminedataqa1.irh.ae",
   "region": "eu-north-1",
