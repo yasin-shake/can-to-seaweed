@@ -1,5 +1,26 @@
 {
   "last_session": 16,
   "s3_test_ok": true,
-  "s3_test_key": "canbus-data/_test/connection-test-20261123T061238Z.txt"
+  "s3_test_key": "canbus-data/_test/connection-test-20261123T061238Z.txt",
+  "s3_test": {
+    "ok": true,
+    "key": "canbus-data/_test/connection-test-576e49cffc204d0b9a03281dbac00a12.txt",
+    "error": null,
+    "sent": true,
+    "checked_at": "2026-11-24T09:20:58Z"
+  },
+  "s3_session": {
+    "scope": {
+      "destination": "f6545b198b5a6e09cba4df244ab53e1b310a4f0ba257a60371b253edc24490bb",
+      "device_id": "4E4BB624"
+    },
+    "target_session": 16,
+    "latest_session": 16,
+    "latest_profile_session": 16,
+    "target_prefix_exists": true,
+    "target_is_empty": true,
+    "next_session": 17,
+    "error": null,
+    "checked_at": "2026-11-24T09:20:59Z"
+  }
 }

@@ -11,7 +11,7 @@
   <nav aria-label="Workspace"><div class="navlabel">Workspace</div>
     <a href="#telemetry" data-icon="trend">Telemetry</a><a href="#controls" data-icon="sliders" hidden>Signal controls</a>
     <a href="#faults" data-icon="fault">Fault diagnostics</a><a href="#inspector" data-icon="layers">Data inspector</a>
-    <div class="navlabel system">System</div><a href="#settings" data-icon="settings">Settings</a><a href="#logs" data-icon="logs">Activity log</a>
+    <div class="navlabel system">System</div><a href="#s3" data-icon="disk">S3 monitor</a><a href="#settings" data-icon="settings">Settings</a><a href="#logs" data-icon="logs">Activity log</a>
   </nav>
   <div class="sidefoot"><i class="dot" id="sideDot"></i><div id="sideSource">Waiting for input</div><code id="sideDevice"></code></div>
 </aside>
@@ -46,6 +46,12 @@
   <label>Maximum retry delay (seconds)<input type="number" name="upload_retry_max_seconds" required></label>
   <div class="actions"><button class="primary">Save settings</button><output id="settingsMsg" aria-live="polite"></output></div></form></div>
   <div class="panel"><h2>Connection &amp; recording</h2><dl id="health"></dl></div></div></section>
+<section data-page="s3" hidden>
+  <div class="split"><div class="panel"><h2>Session in S3</h2><dl id="s3Session"></dl></div>
+  <div class="panel"><h2>Upload queue</h2><dl id="s3Queue"></dl></div></div>
+  <div class="panel"><h2>Latest MF4 transfer attempts</h2><div id="s3Transfers"></div></div>
+  <div class="panel"><h2>Last verified MF4</h2><dl id="s3Verified"></dl></div>
+</section>
 <section data-page="logs" hidden><div class="panel"><h2>Logger activity</h2><div id="logTable"></div></div></section>
 </div></main>
 <dialog id="picker"><form method="dialog" id="pickerForm"><div class="dialoghead"><div><h2>Choose signals</h2><span class="muted" id="selectionCount"></span></div><button type="button" id="cancelPick" aria-label="Close" class="iconbutton" data-icon="close"></button></div>

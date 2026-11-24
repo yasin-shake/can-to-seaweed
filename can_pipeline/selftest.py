@@ -1,4 +1,5 @@
 """Offline self-test (no serial port, no network): parser, DTC decoder (single + BAM + RTS), MF4 round trip."""
+import json
 import os
 import tempfile
 
@@ -149,6 +150,130 @@ except _Stop:
 assert "aws-chunked" not in _seen["h"].get("content-encoding", ""), _seen["h"]
 assert "x-amz-trailer" not in _seen["h"] and _seen["h"]["content-length"] == "100", _seen["h"]
 print("S3 PUT is a plain (non-chunked) request")
+
+# Hardware and simulator share a destination test, while their MF4 receipts and spool files stay separate.
+from hashlib import sha256
+from io import BytesIO
+from pathlib import Path
+from unittest.mock import Mock, patch
+from botocore.exceptions import ClientError
+import s3_test
+
+with tempfile.TemporaryDirectory() as tmp, patch.object(P, "BASE", tmp), patch.object(P, "DATA_DIR", tmp):
+    cfg = P.Config(os.path.join(os.path.dirname(__file__), "config.json"))
+    cfg.d.update(upload_enabled=False, device_id="EC000001")
+    Path(tmp, "config.json").write_text(json.dumps(cfg.snapshot()), encoding="utf-8")
+    P.save_state(last_session=12, existing_field="keep")
+    listing = Mock()
+    listing.list_objects_v2.side_effect = [
+        {"CommonPrefixes": [{"Prefix": cfg.get("prefix") + "/EC000001/00000004/"}],
+         "IsTruncated": True, "NextContinuationToken": "next"},
+        {"CommonPrefixes": [{"Prefix": cfg.get("prefix") + "/EC000001/00000010/"}]},
+        {},
+    ]
+    listing.put_object.side_effect = lambda **kw: setattr(
+        listing.get_object, "return_value", {"Body": BytesIO(kw["Body"])})
+    with patch.object(P, "s3_client", return_value=listing), patch.object(s3_test, "check_network"):
+        assert s3_test.main([]) == 0
+    state = P.load_state()
+    check = state["s3_session"]
+    assert state["last_session"] == 12 and state["existing_field"] == "keep" and state["s3_test"]["ok"]
+    assert (check["latest_session"], check["target_session"], check["target_is_empty"]) == (10, 12, True)
+    assert check["next_session"] == max(13, cfg.get("first_session"))
+    assert listing.list_objects_v2.call_args_list[1].kwargs["ContinuationToken"] == "next"
+    assert listing.list_objects_v2.call_args.kwargs["Prefix"].endswith("/EC000001/00000012/")
+    listing.list_objects_v2.side_effect = [{"CommonPrefixes": []}, {"Contents": [{"Key": "object"}]}]
+    assert s3_test.record_session_check(cfg, listing)
+    check = P.load_state()["s3_session"]
+    assert check["latest_session"] == 12 and check["target_is_empty"] is False
+    listing.list_objects_v2.side_effect = OSError("listing unavailable")
+    assert not s3_test.record_session_check(cfg, listing)
+    check = P.load_state()["s3_session"]
+    assert check["target_is_empty"] is None and "listing unavailable" in check["error"]
+
+    cfg_dir = Path(tmp, "local_run")
+    cfg_dir.mkdir()
+    simulator = {**cfg.snapshot(), "device_id": "EC000002", "first_session": 1}
+    Path(cfg_dir, "config.json").write_text(json.dumps(simulator), encoding="utf-8")
+    sim_cfg = P.Config(str(Path(cfg_dir, "config.json")))
+    base_prefix = cfg.get("prefix")
+    listing.list_objects_v2.side_effect = [
+        {"CommonPrefixes": [{"Prefix": base_prefix + "/EC000002/00000001/"}]},
+        {"CommonPrefixes": [{"Prefix": base_prefix + "/EC000001/00000016/"}]},
+        {},
+    ]
+    check = P.check_s3_session(sim_cfg, listing, 1)
+    assert check["latest_session"] == 1 and check["latest_profile_session"] == 16
+    assert check["target_prefix_exists"] and check["target_is_empty"]
+    assert check["next_session"] == 17 == P.next_session_number(sim_cfg, 4, check["latest_profile_session"])
+    sim_cfg.d["prefix"] = "different-destination"
+    listing.list_objects_v2.reset_mock()
+    listing.list_objects_v2.side_effect = [{}]
+    assert P.bucket_session_inventory(sim_cfg, listing) == (set(), None)
+    listing.list_objects_v2.assert_called_once()
+
+    s3_test.record_test(cfg, True, "probe")
+    P.DATA_DIR = os.path.join(tmp, "local_run")
+    assert P.s3_test_result(cfg)["ok"] and P.upload_gate(cfg) == "disabled in config"
+    cfg.d["upload_enabled"] = True
+    assert P.upload_gate(cfg) == ""
+    prefix = cfg.get("prefix")
+    cfg.d["prefix"] = "other-target"
+    assert not P.s3_test_result(cfg)
+    cfg.d["prefix"], cfg.d["upload_enabled"] = prefix, False
+    path = Path(P.DATA_DIR, "spool", "00000003", "00000001-12345678.MF4")
+    path.parent.mkdir(parents=True)
+    data = b"MF4 QA test contents"
+    path.write_bytes(data)
+    client = Mock()
+    client.get_object.return_value = {"ContentLength": len(data), "Body": BytesIO(data)}
+    s3_test.upload_one(cfg, client, path)
+    key = prefix + "/EC000001/00000003/00000001-12345678.MF4"
+    assert client.put_object.call_args.kwargs["Key"] == key
+    assert client.put_object.call_args.kwargs["IfNoneMatch"] == "*"
+    client.get_object.assert_called_once_with(Bucket=cfg.get("bucket"), Key=key)
+    receipt = P.read_receipt(Path(P.DATA_DIR, "s3_checks", "last_mf4.json"))
+    assert receipt["sha256"] == sha256(data).hexdigest() and path.read_bytes() == data
+    transfer = P.read_receipt(P.transfer_receipt_path("manual"))
+    assert transfer["sent"] == "uploaded" and transfer["verified"] and transfer["uri"] == receipt["uri"]
+    client.get_object.return_value = {"ContentLength": len(data), "Body": BytesIO(data[::-1])}
+    try:
+        P.transfer_mf4(client, cfg, str(path), "automatic")
+    except ValueError as e:
+        assert "SHA-256" in str(e)
+    else:
+        raise AssertionError("Equal-sized corrupt MF4 accepted")
+    assert P.read_receipt(Path(P.DATA_DIR, "s3_checks", "last_mf4.json")) == receipt
+    transfer = P.read_receipt(P.transfer_receipt_path("automatic"))
+    assert transfer["sent"] == "uploaded" and not transfer["verified"] and "SHA-256" in transfer["error"]
+    assert P.read_receipt(P.transfer_receipt_path("manual"))["verified"]
+    missing = ClientError({"Error": {"Code": "NoSuchKey"}, "ResponseMetadata": {"HTTPStatusCode": 404}}, "GetObject")
+    client.reset_mock()
+    client.get_object.side_effect = [missing, {"ContentLength": len(data), "Body": BytesIO(data)}]
+    blocked = PermissionError("destination temporarily open")
+    blocked.winerror = 5
+    replace = os.replace
+    replace_results = iter([blocked])
+
+    def replace_with_transient_error(src, dst):
+        error = next(replace_results, None)
+        if error:
+            raise error
+        replace(src, dst)
+
+    with patch.object(P.os, "replace", side_effect=replace_with_transient_error), patch.object(P.time, "sleep"):
+        retried = P.transfer_mf4(client, cfg, str(path), "automatic")
+    assert retried["verified"] and client.upload_file.call_count == 1 and client.get_object.call_count == 2
+    assert P.read_receipt(P.transfer_receipt_path("automatic")) == retried
+    P.save_state(s3_session={"scope": P.s3_scope(cfg), "target_session": 3, "target_is_empty": False})
+    upload = P.build_status(cfg, Mock(**{"current.return_value": None}))["upload"]
+    assert upload["session_check"]["target_session"] == 3
+    assert upload["transfers"]["automatic"] == retried and upload["transfers"]["manual"]["verified"]
+    assert upload["monitor_verified_mf4"]["sha256"] == receipt["sha256"]
+    cfg.d["prefix"] = "changed-target"
+    upload = P.build_status(cfg, Mock(**{"current.return_value": None}))["upload"]
+    assert "session_check" not in upload and not upload["transfers"] and upload["monitor_verified_mf4"] is None
+print("S3 session discovery, profile sharing, MF4 transfer status and local retention OK")
 
 # Check that live controls survive the same text parser and DTC decoder used by the logger.
 sim = local_simulator.Simulator()

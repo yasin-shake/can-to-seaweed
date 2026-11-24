@@ -31,7 +31,7 @@ Choose one command. Both start a background producer and a foreground Windows lo
 
 Open the [local ECU dashboard](http://127.0.0.1:8081) when the logger prints its dashboard address. The producer listens on `127.0.0.1:19390`. The logger connects as a TCP client, sends `LIVE ON` and receives newline-delimited `Tx J1939` records. The baud rate applies only to physical COM ports. This setup needs neither a virtual COM driver nor a Linux CAN interface. [WSL localhost networking](https://learn.microsoft.com/en-us/windows/wsl/networking) · [pySerial socket transport](https://pyserial.readthedocs.io/en/latest/url_handlers.html#socket)
 
-At first start, the launcher creates `can_pipeline/local_run/config.json` with device ID `EC000001` and uploads disabled. This local profile has its own state, logs and spool. Subsequent starts reuse it. For hardware capture, start `pipeline.py` with its original configuration.
+The main `can_pipeline/config.json` has two IDs. `device_id` identifies the hardware logger (`4E4BB624`) and `simulator_device_id` seeds the simulator profile (`EC000001`). These are logger IDs used in MF4 headers and S3 paths. At first start, `run_local.py` creates `can_pipeline/local_run/config.json` with uploads disabled and **After upload** set to **Archive local copy**. Subsequent starts use that local file's `device_id`, along with its own state, logs, and spool. Keep the simulator ID consistent while its spool contains files. Start `pipeline.py` for hardware capture.
 
 ## 3. Verify and operate the simulator
 
@@ -62,6 +62,31 @@ Get-ChildItem .\can_pipeline\local_run\spool -Recurse -Filter *.MF4 |
 ```
 
 Each MF4 has a companion `.meta.json` with frame and DTC counts. The first-run profile inherits file rotation settings from the hardware profile. A short test can produce its first closed file when you stop. Logs are in `can_pipeline/local_run/logs/pipeline.log`.
+
+## Verify one recording in S3
+
+Keep **Settings → Upload to S3** set to **Off** for a one-file check. Enabling it processes the entire simulator spool using the selected **After upload** policy.
+
+1. In PowerShell, list completed simulator recordings and select the session and filename you want to verify.
+
+   ```powershell
+   Get-ChildItem .\can_pipeline\local_run\spool -Recurse -Filter *.MF4 |
+       Select-Object DirectoryName,Name,Length
+   ```
+
+2. From the repository root, run the following command with your chosen session and filename.
+
+   ```powershell
+   .\.venv\Scripts\python.exe .\can_pipeline\s3_test.py --local --verify-file 00000003/00000004-6B0543C3.MF4
+   ```
+
+   The command uses the normal device/session object key, downloads the result, compares the complete SHA-256 digest and retains the local file. A retry at an existing key verifies the stored bytes without replacing that object.
+
+3. Open **S3 monitor** to see the active profile and device ID. The latest manual and automatic attempts show whether S3 accepted the upload and whether the downloaded MF4 matched the local SHA-256. **Last verified MF4** shows the S3 URI, byte count, timestamp and SHA-256 at verification time. The pending count still includes a file retained in the spool after a one-file check. When automatic uploads drain the spool, each file goes to the session in which it was recorded.
+
+For a connectivity-only check use `s3_test.py --local` without a filename. This writes a small object beneath `_test/`. A new successful probe is visible to the hardware and simulator dashboards when the endpoint, region, bucket and prefix match. Older results remain associated with their original profile. After updating the code, restart the logger once and reload the dashboard. Subsequent results appear on its next status refresh.
+
+Both test modes update the chosen profile's `state.json` with the latest S3 session for its device, the highest session across the hardware and simulator profiles when their destinations match, and whether S3 already lists the selected session prefix. Use `--local` to check the simulator's current target. With `session_from_bucket` enabled, startup also lists S3 and picks a number above the matching profiles' remote sessions and the selected profile's local counter. Each profile uploads under its own device ID. The S3 credentials need permission to list both matching device prefixes as well as upload and read the test object.
 
 ## Troubleshooting
 

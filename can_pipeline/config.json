@@ -2,6 +2,7 @@
   "serial_port": "COM3",
   "baud": 115200,
   "device_id": "4E4BB624",
+  "simulator_device_id": "EC000001",
   "file_seconds": 30,
   "file_max_kb": 32,
   "upload_enabled": true,
@@ -15,7 +16,7 @@
   "prefix": "canbus-data",
   "dbc_path": "CSS-Electronics-J1939-2025-03_v2.4.dbc",
   "extra_dtc_pgns": [],
-  "session_from_bucket": false,
+  "session_from_bucket": true,
   "first_session": 1,
   "web_host": "127.0.0.1",
   "web_port": 8080

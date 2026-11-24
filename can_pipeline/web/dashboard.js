@@ -24,7 +24,7 @@ const fmtTime = ts => new Date(ts*1000).toLocaleTimeString([], {hour12:false});
 const palette=['#007e71','#3469ab','#ad652a','#795da5','#427e53','#287fa2'];
 function stored(key,fallback){try{return JSON.parse(localStorage.getItem('ecu.v2.'+key)) ?? fallback;}catch{return fallback;}}
 function save(key,value){try{localStorage.setItem('ecu.v2.'+key,JSON.stringify(value));}catch{}}
-const pages={telemetry:'Live telemetry',controls:'Signal controls',faults:'Fault diagnostics',inspector:'Data inspector',settings:'Settings',logs:'Activity log'};
+const pages={telemetry:'Live telemetry',controls:'Signal controls',faults:'Fault diagnostics',inspector:'Data inspector',s3:'S3 monitor',settings:'Settings',logs:'Activity log'};
 let statusData=null, catalog=[], catalogReady=false, live=new Map(), known=new Map(), page='telemetry', inspectTab='signals';
 let selection=stored('signals',null), draft=[], seconds=Number(stored('seconds',60)), settingsDirty=false;
 if (!Array.isArray(selection)) selection=null;
@@ -66,6 +66,9 @@ async function command(cmd,msg,success){
 }
 function table(id,headers,rows,empty){
   $(id).innerHTML=rows.length?'<div class="tablewrap"><table><thead><tr>'+headers.map(h=>'<th scope="col">'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>':'<p class="empty">'+esc(empty)+'</p>';
+}
+function details(id,values){
+  $(id).innerHTML=Object.entries(values).map(([k,v])=>'<dt>'+esc(k)+'</dt><dd>'+esc(v)+'</dd>').join('');
 }
 function defaults(){
   const available=[...known.values()].filter(s=>live.get(keyOf(s))?.numeric);
@@ -228,19 +231,78 @@ function renderSettings(){
   const s=statusData,form=$('settingsForm');
   if(!settingsDirty){
     for(const [k,v] of Object.entries(s.config)){
-      const el=form.elements[k];el.value=String(v);
+      const el=form.elements[k];if(!el)continue;
+      el.value=String(v);
       if(s.limits[k]) [el.min,el.max]=s.limits[k];
     }
   }
-  const se=s.serial, file=s.current_file;
-  const values={'Input':se.port,'Input state':se.error||(se.connected?'Connected':'Disconnected'),
+  const se=s.serial, file=s.current_file, test=s.upload.test||{}, verified=s.upload.verified_mf4;
+  const message=$('settingsMsg');
+  if(test.ok && message.classList.contains('error') && message.textContent.includes('S3 connection test')){
+    report(message,settingsDirty?'Connection test passed. Save settings to apply your changes.':'Connection test passed.');
+  }
+  const values={'Profile':s.simulator_controls?'ECU simulator':'Hardware logger','Device ID':s.device_id,
+    'Input':se.port,'Input state':se.error||(se.connected?'Connected':'Disconnected'),
     'Throughput':number(se.bytes_per_sec)+' B/s','Malformed / oversized':se.bad_lines+' / '+se.oversize_lines,
     'PGN mismatches':se.pgn_mismatch,'Decoder':s.dbc?.name||'Built-in signals','Current MF4':file?.name||'Waiting for frames',
     'Current file frames':file?.frames??0,'Pending / uploaded':s.files.pending+' / '+s.files.uploaded,
-    'Upload target':s.upload.target,'Upload state':s.upload.error||s.upload.gate||s.upload.state,'Last upload':s.upload.last||'—'};
+    'Current session target':s.upload.target,
+    'S3 connection test':test.ok?'Passed'+(test.checked_at?' · '+test.checked_at:''):
+      (test.error?'Failed · '+test.error:'No pass recorded')+' · Run s3_test.py'+(s.simulator_controls?' --local':''),
+    'Automatic uploads':s.config.upload_enabled?'On':'Off',
+    'Upload state':s.config.upload_enabled?(s.upload.gate||s.upload.error||s.upload.state):'Paused in this profile',
+    'Last automatic upload this run':s.upload.last||'—'};
+  if(verified){
+    values['Last verified MF4']=verified.uri;
+    values['Verified at']=verified.verified_at;
+    values['Verified bytes']=number(verified.bytes);
+    values['SHA-256']=verified.sha256;
+  }
   if(se.transport!=='tcp')values['Baud / utilization']=se.baud+' / '+se.utilization_pct+'%';
   values['Frames received']=number(s.frames.total);
-  $('health').innerHTML=Object.entries(values).map(([k,v])=>'<dt>'+esc(k)+'</dt><dd>'+esc(v)+'</dd>').join('');
+  details('health',values);
+}
+function renderS3(){
+  const s=statusData, u=s.upload, check=u.session_check, test=u.test||{};
+  const runTest='Run s3_test.py'+(s.simulator_controls?' --local':'');
+  const sessionId=n=>String(n).padStart(8,'0');
+  let targetStatus=runTest;
+  if(check?.error)targetStatus='Listing failed · '+check.error;
+  else if(check && check.target_session!==s.session)targetStatus='Session changed since last check · '+runTest;
+  else if(check?.target_is_empty && check.target_prefix_exists)targetStatus='Listed in S3 · No objects returned';
+  else if(check)targetStatus=check.target_is_empty?'Empty at last check':'Already contained objects at last check';
+  details('s3Session',{
+    'Profile':s.simulator_controls?'ECU simulator':'Hardware logger',
+    'Device ID':s.device_id,
+    'Current target':u.target,
+    'Target at last check':targetStatus,
+    'Latest S3 session for this device':!check||check.error?'—':check.latest_session==null?'No sessions found':sessionId(check.latest_session),
+    'Latest S3 session across matching profiles':check?.latest_profile_session==null?'—':sessionId(check.latest_profile_session),
+    'Next session at check':check?.next_session==null?'—':sessionId(check.next_session),
+    'Session checked at':check?.checked_at||'—'
+  });
+  const connection=test.ok?'Upload and read-back verified':test.error?
+    (test.sent?'Upload accepted · read-back failed':'Check failed')+' · '+test.error:runTest;
+  details('s3Queue',{
+    'Automatic uploads':s.config.upload_enabled?(u.gate||u.state):'Off',
+    'Pending files':number(s.files.pending),
+    'Verified automatic uploads this run':number(s.files.uploaded),
+    'Last retry error':u.error||'—',
+    'Connection check':connection,
+    'Connection checked at':test.checked_at||'—'
+  });
+  const rows=Object.entries(u.transfers||{}).map(([source,t])=>{
+    const sent=t.sent==='uploaded'?'Accepted by S3':t.sent==='already_exists'?'Object already in S3':'Unconfirmed';
+    const received=t.verified?'SHA-256 matched':t.sent?'Verification failed':'—';
+    return [esc(source==='manual'?'Manual':'Automatic'),'<code>'+esc(t.uri)+'</code>',esc(sent),esc(received),
+      esc(t.checked_at),esc(t.error||'—')];
+  });
+  table('s3Transfers',['Source','Object','Sent to S3','Read back from S3','Checked at (UTC)','Error'],rows,
+    'Waiting for an automatic upload or an s3_test.py --verify-file check.');
+  const verified=u.monitor_verified_mf4;
+  details('s3Verified',verified?
+    {'Object':verified.uri,'Verified at':verified.verified_at,'Bytes':number(verified.bytes),'SHA-256':verified.sha256}:
+    {'Status':'Waiting for an MF4 read-back.'});
 }
 $('settingsForm').oninput=()=>{settingsDirty=true;report($('settingsMsg'),'Unsaved changes');};
 $('settingsForm').onsubmit=async e=>{
@@ -260,7 +322,7 @@ function render(){
   else if(page==='faults'){
     $('faultControls').hidden=!s.simulator_controls;
     table('faultTable',['Last seen','Type','SPN','FMI','Source','OC','Events'],s.dtc.seen.map(d=>[esc(d.last),esc(d.kind),esc(d.spn)+' '+esc(d.name||''),esc(d.fmi)+' '+esc(d.fmi_text||''),esc(d.sa),esc(d.oc),esc(number(d.count))]),'No faults received this session.');
-  }else if(page==='inspector')renderInspector();else if(page==='settings')renderSettings();
+  }else if(page==='inspector')renderInspector();else if(page==='settings')renderSettings();else if(page==='s3')renderS3();
 }
 function showError(e){$('offline').textContent=e.message;$('offline').hidden=false;}
 function setLink(online){

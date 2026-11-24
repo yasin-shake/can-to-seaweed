@@ -6,6 +6,7 @@ Open: http://127.0.0.1:8080
 import argparse
 import collections
 import glob
+import hashlib
 import json
 import logging
 import os
@@ -14,7 +15,10 @@ import re
 import shutil
 import sys
 import threading
+import tempfile
 import time
+from contextlib import closing
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 from urllib.parse import parse_qs, urlparse
@@ -102,12 +106,19 @@ def load_state():
 
 
 def save_state(**kw):
-    s = load_state()
-    s.update(kw)
-    tmp = state_path() + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(s, f, indent=2)
-    os.replace(tmp, state_path())
+    folder = os.path.join(DATA_DIR, "s3_checks")
+    os.makedirs(folder, exist_ok=True)
+    # The logger and s3_test are separate processes sharing this read-modify-write.
+    with open(os.path.join(folder, "state.lock"), "a+b") as lock:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        s = load_state()
+        s.update(kw)
+        write_receipt(state_path(), s)
 
 
 # ----------------------------------------------------------------------------- logging
@@ -370,23 +381,190 @@ def classify_error(e):
     return "%s: %s" % (name, e)
 
 
-def discover_bucket_session(cfg):
-    """Highest numeric session folder under <prefix>/<device_id>/ (read-only listing), or None."""
-    cl = s3_client(cfg)
-    prefix = "%s/%s/" % (cfg.get("prefix"), cfg.get("device_id"))
-    best, token = None, None
+def list_bucket_sessions(cfg, client, device_id):
+    """Numeric session prefixes under one device."""
+    prefix = "%s/%s/" % (cfg.get("prefix"), device_id)
+    sessions, token = set(), None
     while True:
         kw = dict(Bucket=cfg.get("bucket"), Prefix=prefix, Delimiter="/")
         if token:
             kw["ContinuationToken"] = token
-        r = cl.list_objects_v2(**kw)
+        r = client.list_objects_v2(**kw)
         for cp in r.get("CommonPrefixes", []):
             seg = cp["Prefix"][len(prefix):].strip("/")
-            if seg.isdigit():
-                best = max(best or 0, int(seg))
+            if re.fullmatch(r"[0-9]+", seg):
+                sessions.add(int(seg))
         if not r.get("IsTruncated"):
-            return best
+            return sessions
         token = r.get("NextContinuationToken")
+
+
+def s3_timestamp():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def s3_scope(cfg):
+    return {"destination": Path(s3_test_path(cfg)).stem, "device_id": cfg.get("device_id")}
+
+
+def bucket_session_inventory(cfg, client):
+    device_id = cfg.get("device_id")
+    sessions = list_bucket_sessions(cfg, client, device_id)
+    all_sessions = sessions.copy()
+    destination = s3_scope(cfg)["destination"]
+    # The hardware and simulator profiles share a session floor for the same destination.
+    for path in (Path(BASE, "config.json"), Path(BASE, "local_run", "config.json")):
+        if path.resolve() == Path(cfg.path).resolve() or not path.is_file():
+            continue
+        peer = Config(str(path))
+        scope = s3_scope(peer)
+        if scope["destination"] == destination and scope["device_id"] != device_id:
+            all_sessions.update(list_bucket_sessions(cfg, client, scope["device_id"]))
+    return sessions, max(all_sessions, default=None)
+
+
+def next_session_number(cfg, current, latest=None):
+    return max((latest or 0) + 1, (current or 0) + 1, int(cfg.get("first_session")))
+
+
+def check_s3_session(cfg, client, session, inventory=None):
+    sessions, latest = bucket_session_inventory(cfg, client) if inventory is None else inventory
+    is_empty = None
+    if session is not None:
+        prefix = "%s/%s/%08d/" % (cfg.get("prefix"), cfg.get("device_id"), session)
+        page = client.list_objects_v2(Bucket=cfg.get("bucket"), Prefix=prefix, MaxKeys=1)
+        is_empty = not bool(page.get("Contents"))
+        if not is_empty:
+            sessions = sessions | {session}
+            latest = max(latest or 0, session)
+    return {"latest_session": max(sessions, default=None), "latest_profile_session": latest,
+            "target_prefix_exists": session in sessions if session is not None else None,
+            "target_is_empty": is_empty,
+            "next_session": next_session_number(cfg, session, latest)}
+
+
+def s3_test_path(cfg):
+    target = [cfg.get(k) for k in ("endpoint_url", "region", "bucket", "prefix")]
+    scope = hashlib.sha256(json.dumps(target).encode()).hexdigest()
+    root = BASE if os.path.abspath(DATA_DIR) == os.path.join(BASE, "local_run") else DATA_DIR
+    return os.path.join(root, "s3_checks", scope + ".json")
+
+
+def read_receipt(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def write_receipt(path, receipt):
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    f = tempfile.NamedTemporaryFile(mode="w", dir=folder, encoding="utf-8", delete=False)
+    try:
+        with f:
+            json.dump(receipt, f, indent=2)
+        # A dashboard poll can briefly hold the destination open on Windows.
+        for attempt in range(6):
+            try:
+                os.replace(f.name, path)
+                break
+            except PermissionError as e:
+                if getattr(e, "winerror", None) not in (5, 32) or attempt == 5:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+    finally:
+        Path(f.name).unlink(missing_ok=True)
+
+
+def s3_test_result(cfg):
+    receipt_path = Path(s3_test_path(cfg))
+    result = read_receipt(receipt_path)
+    if result:
+        return result
+    # Older installations stored the result alongside this profile's session counter.
+    state = load_state()
+    if state.get("s3_test_ok") and not any(receipt_path.parent.glob("?" * 64 + ".json")):
+        return {"ok": True, "key": state.get("s3_test_key"), "legacy": True}
+    return {}
+
+
+def mf4_key(cfg, path):
+    path = Path(path)
+    return "%s/%s/%s/%s" % (cfg.get("prefix"), cfg.get("device_id"), path.parent.name, path.name)
+
+
+def stream_sha256(stream):
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_mf4(client, cfg, path):
+    from botocore.exceptions import ClientError
+
+    bucket, key = cfg.get("bucket"), mf4_key(cfg, path)
+    size = os.path.getsize(path)
+    # Allow the endpoint a short window to expose an acknowledged write.
+    delays = (0.0, 0.25, 0.75, 1.5)
+    for attempt, delay in enumerate(delays):
+        if delay:
+            time.sleep(delay)
+        try:
+            remote = client.get_object(Bucket=bucket, Key=key)
+            break
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code")
+            if code not in ("NoSuchKey", "404") or attempt == len(delays) - 1:
+                raise
+    with closing(remote["Body"]) as body:
+        if remote["ContentLength"] != size:
+            raise ValueError("S3 length differs from the local MF4 (%d vs %d bytes)" % (remote["ContentLength"], size))
+        remote_digest = stream_sha256(body)
+    with open(path, "rb") as f:
+        if stream_sha256(f) != remote_digest:
+            raise ValueError("S3 SHA-256 differs from the local MF4")
+    receipt = {"scope": s3_scope(cfg), "uri": "s3://%s/%s" % (bucket, key), "bytes": size, "sha256": remote_digest,
+               "verified_at": s3_timestamp()}
+    write_receipt(os.path.join(DATA_DIR, "s3_checks", "last_mf4.json"), receipt)
+    return receipt
+
+
+def transfer_receipt_path(source):
+    return os.path.join(DATA_DIR, "s3_checks", "transfer_" + source + ".json")
+
+
+def transfer_mf4(client, cfg, path, source):
+    """Send an MF4 and record the outcome of its S3 read-back."""
+    from botocore.exceptions import ClientError
+
+    bucket, key = cfg.get("bucket"), mf4_key(cfg, path)
+    transfer = {"scope": s3_scope(cfg), "uri": "s3://%s/%s" % (bucket, key),
+                "sent": None, "verified": False}
+    try:
+        if source == "manual":
+            with open(path, "rb") as f:
+                try:
+                    client.put_object(Bucket=bucket, Key=key, Body=f, IfNoneMatch="*")
+                    transfer["sent"] = "uploaded"
+                except ClientError as e:
+                    if e.response.get("ResponseMetadata", {}).get("HTTPStatusCode") != 412:
+                        raise
+                    transfer["sent"] = "already_exists"
+        else:
+            client.upload_file(path, bucket, key)
+            transfer["sent"] = "uploaded"
+        receipt = verify_mf4(client, cfg, path)
+        transfer.update(receipt, verified=True)
+    except Exception as e:
+        transfer["error"] = classify_error(e)
+        raise
+    finally:
+        transfer["checked_at"] = s3_timestamp()
+        write_receipt(transfer_receipt_path(source), transfer)
+    return transfer
 
 
 def upload_gate(cfg):
@@ -395,8 +573,8 @@ def upload_gate(cfg):
         return "disabled in config"
     if not creds_present():
         return "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY not set"
-    if not load_state().get("s3_test_ok"):
-        return "S3 connection test (s3_test.py) has not passed yet"
+    if not s3_test_result(cfg).get("ok"):
+        return "S3 connection test has not passed for this destination"
     return ""
 
 
@@ -419,25 +597,23 @@ def uploader_loop(cfg, stop):
         with STATS.lock:
             STATS.upload_state = "uploading"
         for p in files:
+            if stop.is_set() or upload_gate(cfg):
+                break
             session = os.path.basename(os.path.dirname(p))
-            key = "%s/%s/%s/%s" % (cfg.get("prefix"), cfg.get("device_id"), session, os.path.basename(p))
+            key = mf4_key(cfg, p)
             try:
                 if client is None:
                     client = s3_client(cfg)
                 size = os.path.getsize(p)
-                client.upload_file(p, cfg.get("bucket"), key)
-                stored = client.head_object(Bucket=cfg.get("bucket"), Key=key)["ContentLength"]
-                if stored != size:      # never delete the local copy of a corrupted upload
-                    raise RuntimeError("stored object is %d bytes but local file is %d bytes (server altered the "
-                                       "upload, e.g. aws-chunked framing)" % (stored, size))
+                transfer_mf4(client, cfg, p, "automatic")
             except Exception as e:
                 failures += 1
                 msg = classify_error(e)
                 delay = min(cfg.get("upload_retry_max_seconds"), 5 * 2 ** min(failures - 1, 10))
                 next_try = time.time() + delay
                 client = None
-                log.error("Upload FAILED for %s: %s (attempt %d, retry in %ds, file kept in spool)",
-                          os.path.basename(p), msg, failures, delay)
+                log.error("Transfer failed for s3://%s/%s: %s (attempt %d, retry in %ds, file kept in spool)",
+                          cfg.get("bucket"), key, msg, failures, delay)
                 with STATS.lock:
                     STATS.upload_error = msg
                     STATS.upload_failures = failures
@@ -725,6 +901,19 @@ def build_status(cfg, rec):
             "recent": list(STATS.recent)[-20:][::-1],
         }
     s["config"] = {k: c[k] for k in EDITABLE}
+    s["upload"]["test"] = s3_test_result(cfg)
+    s["upload"]["verified_mf4"] = read_receipt(os.path.join(DATA_DIR, "s3_checks", "last_mf4.json"))
+    scope = s3_scope(cfg)
+    s["upload"]["monitor_verified_mf4"] = (
+        s["upload"]["verified_mf4"] if s["upload"]["verified_mf4"].get("scope") == scope else None)
+    session_check = load_state().get("s3_session", {})
+    if session_check.get("scope") == scope:
+        s["upload"]["session_check"] = session_check
+    s["upload"]["transfers"] = {}
+    for source in ("automatic", "manual"):
+        transfer = read_receipt(transfer_receipt_path(source))
+        if transfer.get("scope") == scope:
+            s["upload"]["transfers"][source] = transfer
     s["limits"] = {k: list(v[1:]) if v[0] is int else None for k, v in EDITABLE.items()}
     return s
 
@@ -890,17 +1079,23 @@ def main(argv=None):
     jobs = queue.Queue()
 
     state = load_state()
-    session = max(int(state.get("last_session", 0)) + 1, int(cfg.get("first_session")))
-    if cfg.get("session_from_bucket") and not upload_gate(cfg):
+    last_session = int(state.get("last_session", 0))
+    session = next_session_number(cfg, last_session)
+    session_check = None
+    if cfg.get("session_from_bucket") and creds_present():
         try:
-            b = discover_bucket_session(cfg)
-            if b is not None and b + 1 > session:
-                log.info("Bucket already has sessions up to %08d, starting at %08d", b, b + 1)
-                session = b + 1
+            client = s3_client(cfg)
+            inventory = bucket_session_inventory(cfg, client)
+            b = inventory[1]
+            selected = next_session_number(cfg, last_session, b)
+            if selected > session:
+                log.info("Matching S3 profiles have sessions up to %08d, starting at %08d", b, selected)
+            session = selected
+            session_check = check_s3_session(cfg, client, session, inventory)
         except Exception as e:
             log.error("Could not read existing sessions from bucket: %s", classify_error(e))
     elif cfg.get("session_from_bucket"):
-        log.warning("Session number chosen locally (%08d) because bucket access is not enabled yet; "
+        log.warning("Session number chosen locally (%08d) because S3 credentials are unavailable; "
                     "it may overlap sessions already in the bucket for device %s", session, cfg.get("device_id"))
     rec = Recorder(cfg, session, jobs)
     try:
@@ -908,7 +1103,11 @@ def main(argv=None):
     except OSError as e:
         log.error("Cannot start web server on %s:%s: %s", cfg.get("web_host"), cfg.get("web_port"), e)
         return 1
-    save_state(last_session=session)
+    changes = {"last_session": session}
+    if session_check is not None:
+        changes["s3_session"] = dict(session_check, scope=s3_scope(cfg), target_session=session,
+                                     checked_at=s3_timestamp())
+    save_state(**changes)
     STATS.session = session
     log.info("Pipeline starting: device %s, session %08d, input %s", cfg.get("device_id"), session,
              cfg.get("serial_port"))

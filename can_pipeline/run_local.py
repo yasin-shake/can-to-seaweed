@@ -41,9 +41,11 @@ def main():
         profile = RUN_DIR / "config.json"
         if not profile.exists():
             cfg = json.loads((HERE / "config.json").read_text(encoding="utf-8"))
+            # Older hardware config files predate the explicit simulator ID.
+            simulator_device_id = cfg.pop("simulator_device_id", "EC000001")
             cfg.update(serial_port=f"socket://{HOST}:{PORT}", web_host=HOST, web_port=8081,
-                       upload_enabled=False, session_from_bucket=False, device_id="EC000001",
-                       archive_dir="archive", first_session=1, simulator_controls=True)
+                       upload_enabled=False, session_from_bucket=True, device_id=simulator_device_id,
+                       after_upload="archive", archive_dir="archive", first_session=1, simulator_controls=True)
             tmp = profile.with_suffix(".tmp")
             tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
             tmp.replace(profile)
