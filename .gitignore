@@ -1,6 +1,7 @@
 .venv/
 can_pipeline/spool/
 can_pipeline/logs/
+can_pipeline/local_run/
 can_pipeline/__pycache__/
 samples/
 config.json

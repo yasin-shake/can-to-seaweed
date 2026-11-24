@@ -1,5 +1,5 @@
 {
-  "serial_port": "COM5",
+  "serial_port": "COM3",
   "baud": 115200,
   "device_id": "4E4BB624",
   "file_seconds": 30,

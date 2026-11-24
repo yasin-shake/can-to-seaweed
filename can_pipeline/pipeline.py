@@ -26,6 +26,7 @@ import mf4writer
 import signals
 
 BASE = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = BASE
 
 
 def load_dotenv(path=os.path.join(BASE, ".env")):
@@ -89,7 +90,7 @@ class Config:
 
 
 def state_path():
-    return os.path.join(BASE, "state.json")
+    return os.path.join(DATA_DIR, "state.json")
 
 
 def load_state():
@@ -130,9 +131,9 @@ MEM = MemHandler()
 
 
 def setup_logging(cfg):
-    os.makedirs(os.path.join(BASE, "logs"), exist_ok=True)
+    os.makedirs(os.path.join(DATA_DIR, "logs"), exist_ok=True)
     fmt = logging.Formatter("%(asctime)s %(levelname)-7s %(message)s")
-    fh = RotatingFileHandler(os.path.join(BASE, "logs", "pipeline.log"), maxBytes=5_000_000,
+    fh = RotatingFileHandler(os.path.join(DATA_DIR, "logs", "pipeline.log"), maxBytes=5_000_000,
                              backupCount=5, encoding="utf-8")
     fh.setFormatter(fmt)
     sh = logging.StreamHandler(sys.stdout)
@@ -220,7 +221,7 @@ class Recorder:
         self.lock = threading.Lock()
         self.frames, self.start, self.split, self.dtcs = [], None, 0, []
         self.jfile, self.jpath, self.last_flush = None, None, time.time()
-        os.makedirs(os.path.join(BASE, "spool", "_journal"), exist_ok=True)
+        os.makedirs(os.path.join(DATA_DIR, "spool", "_journal"), exist_ok=True)
 
     def current(self):
         with self.lock:
@@ -258,7 +259,7 @@ class Recorder:
     def _open(self, ts):
         self.split += 1
         self.start = ts
-        self.jpath = os.path.join(BASE, "spool", "_journal", "%08d-%08d.csv" % (self.session, self.split))
+        self.jpath = os.path.join(DATA_DIR, "spool", "_journal", "%08d-%08d.csv" % (self.session, self.split))
         self.jfile = open(self.jpath, "w", encoding="ascii")
         self.jfile.write("#%d,%d,%.4f\n" % (self.session, self.split, ts))
         log.info("Started file %s (session %d)", mf4writer.file_name(self.split, ts), self.session)
@@ -272,7 +273,7 @@ class Recorder:
 
 def recover_journals(cfg, jobs):
     """Turn journals left by a crash / hard stop into MF4 files (nothing is lost)."""
-    for p in sorted(glob.glob(os.path.join(BASE, "spool", "_journal", "*.csv"))):
+    for p in sorted(glob.glob(os.path.join(DATA_DIR, "spool", "_journal", "*.csv"))):
         try:
             if os.path.getsize(p) == 0:          # left behind by a hard kill before anything was flushed
                 os.remove(p)
@@ -302,7 +303,7 @@ def writer_loop(cfg, jobs, stop):
         except queue.Empty:
             continue
         name = mf4writer.file_name(job["split"], job["start"])
-        d = os.path.join(BASE, "spool", "%08d" % job["session"])
+        d = os.path.join(DATA_DIR, "spool", "%08d" % job["session"])
         os.makedirs(d, exist_ok=True)
         path = os.path.join(d, name)
         try:
@@ -454,7 +455,7 @@ def uploader_loop(cfg, stop):
                 log.log(DTC_LEVEL, "DTC PUSHED to bucket in %s: %d DTC message(s): %s", os.path.basename(p),
                         meta["dtc_count"], "; ".join("%s x%d" % kv for kv in meta["dtc"].items()))
             if cfg.get("after_upload") == "archive":
-                ad = os.path.join(BASE, cfg.get("archive_dir"), session)
+                ad = os.path.join(DATA_DIR, cfg.get("archive_dir"), session)
                 os.makedirs(ad, exist_ok=True)
                 shutil.move(p, os.path.join(ad, os.path.basename(p)))
             else:
@@ -473,7 +474,7 @@ def uploader_loop(cfg, stop):
 
 
 def pending_files():
-    return sorted(p for p in glob.glob(os.path.join(BASE, "spool", "*", "*.MF4"))
+    return sorted(p for p in glob.glob(os.path.join(DATA_DIR, "spool", "*", "*.MF4"))
                   if not p.lower().endswith(".part.mf4") and "_journal" not in p)
 
 
@@ -521,14 +522,18 @@ class SerialReader(threading.Thread):
 
     def run(self):
         port, baud = self.cfg.get("serial_port"), self.cfg.get("baud")
+        tcp = port.startswith("socket://")
         last_err = None
         while not self.stop_ev.is_set():
             try:
-                ser = serial.Serial(port, baud, timeout=1)
-                try:
-                    ser.set_buffer_size(rx_size=262144)
-                except Exception:
-                    pass
+                if tcp:
+                    ser = serial.serial_for_url(port, timeout=1)
+                else:
+                    ser = serial.Serial(port, baud, timeout=1)
+                    try:
+                        ser.set_buffer_size(rx_size=262144)
+                    except Exception:
+                        pass
             except Exception as e:
                 msg = "Cannot open %s: %s" % (port, e)
                 with STATS.lock:
@@ -540,10 +545,12 @@ class SerialReader(threading.Thread):
                 continue
             with STATS.lock:
                 STATS.serial_connected, STATS.serial_error = True, ""
-            log.info("Serial port %s opened at %d baud", port, baud)
+            log.info("Input connected: %s", port)
+            self.asm = j1939.MessageAssembler()
             # Newer simulator firmware only prints "Tx J1939 ..." lines after a LIVE ON command (older firmware
             # ignores it). Opening the port resets an Arduino, so wait for its bootloader before sending.
-            self.stop_ev.wait(2.5)
+            if not tcp:
+                self.stop_ev.wait(2.5)
             try:
                 ser.write(b"LIVE ON\n")
                 ser.flush()
@@ -581,6 +588,16 @@ class SerialReader(threading.Thread):
                 k = (sa, pgn, s["name"])
                 e = STATS.signals.setdefault(k, {"count": 0})
                 e.update(msg=acr, msg_desc=desc, sa=sa, pgn=pgn, count=e["count"] + 1, last=now, **s)
+                # Store the final decoded reading in each second, including unavailable markers.
+                if "history" not in e and isinstance(s["value"], (int, float)):
+                    e["history"] = collections.deque(maxlen=301)
+                if "history" in e:
+                    history = e["history"]
+                    point = (round(now, 3), s["value"])
+                    if history and int(history[-1][0]) == int(point[0]):
+                        history[-1] = point
+                    else:
+                        history.append(point)
 
     def _pump(self, ser):
         last_warn = 0.0
@@ -667,7 +684,8 @@ def self_dtc_pgns(cfg):
 def build_status(cfg, rec):
     c = cfg.snapshot()
     fr, by = STATS.rates()
-    baud_bytes = c["baud"] / 10.0
+    tcp = c["serial_port"].startswith("socket://")
+    baud_bytes = 0 if tcp else c["baud"] / 10.0
     util = by / baud_bytes * 100 if baud_bytes else 0
     cur = rec.current()
     with STATS.lock:
@@ -679,7 +697,8 @@ def build_status(cfg, rec):
         sig_list = sorted(({"msg": e["msg"], "msg_desc": e["msg_desc"], "sa": "0x%02X" % e["sa"],
                             "pgn": e["pgn"], "name": e["name"], "label": e["label"], "spn": e["spn"],
                             "value": e["value"], "unit": e["unit"], "status": e["status"],
-                            "count": e["count"], "age": round(now - e["last"], 1)} for e in STATS.signals.values()),
+                            "numeric": "history" in e, "count": e["count"], "age": round(now - e["last"], 1)}
+                           for e in STATS.signals.values()),
                           key=lambda x: (x["msg"], x["sa"]))
         undec = sorted(({"pgn": k[0], "sa": "0x%02X" % k[1], "name": signals.pgn_name(k[0], self_dtc_pgns(cfg)),
                          "count": v["count"], "length": v["length"], "data": v["data"],
@@ -687,12 +706,14 @@ def build_status(cfg, rec):
                        key=lambda x: x["pgn"])
         s = {
             "signals": sig_list, "undecoded": undec, "dbc": signals.dbc_info(),
+            "simulator_controls": c.get("simulator_controls", False),
             "header_bytes": mf4writer.BASE_BYTES,
             "uptime": int(time.time() - STATS.started), "session": STATS.session, "device_id": c["device_id"],
-            "serial": {"port": c["serial_port"], "baud": c["baud"], "connected": STATS.serial_connected,
+            "serial": {"port": c["serial_port"], "transport": "tcp" if tcp else "serial",
+                       "baud": None if tcp else c["baud"], "connected": STATS.serial_connected,
                        "error": STATS.serial_error, "lines": STATS.lines, "bad_lines": STATS.bad_lines,
                        "other_lines": STATS.other_lines, "oversize_lines": STATS.oversize_lines, "pgn_mismatch": STATS.pgn_mismatch,
-                       "bytes_per_sec": round(by), "utilization_pct": round(util, 1)},
+                       "bytes_per_sec": round(by), "utilization_pct": None if tcp else round(util, 1)},
             "frames": {"total": STATS.frames_total, "session": STATS.frames_session, "rate": round(fr, 1)},
             "files": {"written": STATS.files_written, "uploaded": STATS.files_uploaded,
                       "pending": len(pending_files()), "bytes_uploaded": STATS.bytes_uploaded},
@@ -709,7 +730,13 @@ def build_status(cfg, rec):
 
 
 def make_handler(cfg, rec):
-    page = open(os.path.join(BASE, "web", "index.html"), "rb").read()
+    from local_simulator import control_catalog
+    assets = {}
+    for filename, mime in (("index.html", "text/html"), ("dashboard.css", "text/css"),
+                           ("dashboard.js", "text/javascript")):
+        with open(os.path.join(BASE, "web", filename), "rb") as f:
+            assets["/" + filename] = (f.read(), mime + "; charset=utf-8")
+    assets["/"] = assets["/index.html"]
 
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -733,8 +760,27 @@ def make_handler(cfg, rec):
             u = urlparse(self.path)
             if not self._host_ok():
                 return self._send(403, {"error": "bad host"})
-            if u.path in ("/", "/index.html"):
-                return self._send(200, page, "text/html; charset=utf-8")
+            if u.path in assets:
+                return self._send(200, *assets[u.path])
+            if u.path == "/api/controls":
+                return self._send(200, control_catalog() if cfg.snapshot().get("simulator_controls") else [])
+            if u.path == "/api/trends":
+                params = parse_qs(u.query)
+                try:
+                    window = int(params.get("seconds", ["60"])[0])
+                    if window not in (30, 60, 300):
+                        raise ValueError
+                    keys = {}
+                    for key in params.get("signal", [])[:12]:
+                        sa, pgn, name = key.split("/", 2)
+                        keys[key] = (int(sa, 16), int(pgn), name)
+                except ValueError:
+                    return self._send(400, {"error": "Invalid chart window or signal"})
+                now = time.time()
+                with STATS.lock:
+                    series = {key: [pt for pt in STATS.signals.get(k, {}).get("history", ())
+                                    if now - window <= pt[0] <= now] for key, k in keys.items()}
+                return self._send(200, {"now": now, "series": series})
             if u.path == "/api/status":
                 return self._send(200, build_status(cfg, rec))
             if u.path == "/api/watch":
@@ -762,7 +808,8 @@ def make_handler(cfg, rec):
             self._send(404, {"error": "not found"})
 
         def do_POST(self):
-            if urlparse(self.path).path != "/api/config" or not self._host_ok():
+            path = urlparse(self.path).path
+            if path not in ("/api/config", "/api/simulator") or not self._host_ok():
                 return self._send(404, {"error": "not found"})
             origin = self.headers.get("Origin")
             if origin and urlparse(origin).hostname not in ("127.0.0.1", "localhost", "::1"):
@@ -771,6 +818,27 @@ def make_handler(cfg, rec):
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
             except ValueError:
                 return self._send(400, {"error": "invalid JSON"})
+            if not isinstance(body, dict):
+                return self._send(400, {"error": "expected a JSON object"})
+            if path == "/api/simulator":
+                if not cfg.snapshot().get("simulator_controls"):
+                    return self._send(404, {"error": "simulator controls are disabled"})
+                from local_simulator import HOST, PORT, send_command
+                if cfg.get("serial_port") != f"socket://{HOST}:{PORT}":
+                    return self._send(400, {"error": "input must match the local simulator endpoint"})
+                cmd = body.get("command")
+                verb = cmd.strip().partition(" ")[0].upper() if isinstance(cmd, str) else ""
+                if verb not in {"SET", "POT", "SWITCH", "FAULT", "DTC", "RESET"}:
+                    return self._send(400, {"error": "invalid simulator command"})
+                try:
+                    reply = send_command(PORT, cmd)
+                except ValueError as e:
+                    return self._send(400, {"error": str(e)})
+                except OSError as e:
+                    return self._send(503, {"error": str(e)})
+                if not reply.startswith("ACK "):
+                    return self._send(400, {"error": reply or "source disconnected"})
+                return self._send(200, {"reply": reply})
             changes = {}
             for k, v in body.items():
                 spec = EDITABLE.get(k)
@@ -804,10 +872,13 @@ def make_handler(cfg, rec):
 
 
 # ----------------------------------------------------------------------------- main
-def main():
+def main(argv=None):
+    global DATA_DIR
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=os.path.join(BASE, "config.json"))
-    args = ap.parse_args()
+    ap.add_argument("--data-dir", default=BASE, help="directory for logs, spool, archive and state")
+    args = ap.parse_args(argv)
+    DATA_DIR = os.path.abspath(args.data_dir)
     cfg = Config(args.config)
     setup_logging(cfg)
     try:
@@ -831,10 +902,16 @@ def main():
     elif cfg.get("session_from_bucket"):
         log.warning("Session number chosen locally (%08d) because bucket access is not enabled yet; "
                     "it may overlap sessions already in the bucket for device %s", session, cfg.get("device_id"))
+    rec = Recorder(cfg, session, jobs)
+    try:
+        srv = ThreadingHTTPServer((cfg.get("web_host"), cfg.get("web_port")), make_handler(cfg, rec))
+    except OSError as e:
+        log.error("Cannot start web server on %s:%s: %s", cfg.get("web_host"), cfg.get("web_port"), e)
+        return 1
     save_state(last_session=session)
     STATS.session = session
-    log.info("Pipeline starting: device %s, session %08d, port %s @ %d baud", cfg.get("device_id"), session,
-             cfg.get("serial_port"), cfg.get("baud"))
+    log.info("Pipeline starting: device %s, session %08d, input %s", cfg.get("device_id"), session,
+             cfg.get("serial_port"))
 
     dbc = cfg.snapshot().get("dbc_path")
     if dbc:
@@ -845,24 +922,19 @@ def main():
         except Exception as e:
             log.error("Could not load DBC %s: %s. Falling back to the built-in signal table.", dbc_file, e)
 
-    rec = Recorder(cfg, session, jobs)
     recover_journals(cfg, jobs)
-    wt = threading.Thread(target=writer_loop, args=(cfg, jobs, stop), daemon=True)
+    writer_stop = threading.Event()
+    wt = threading.Thread(target=writer_loop, args=(cfg, jobs, writer_stop), daemon=True)
     wt.start()
     threading.Thread(target=uploader_loop, args=(cfg, stop), daemon=True).start()
-    SerialReader(cfg, rec, stop).start()
+    reader = SerialReader(cfg, rec, stop)
+    reader.start()
 
     def ticker():
-        while not stop.is_set():
-            stop.wait(1)
+        while not stop.wait(1):
             rec.tick()
     threading.Thread(target=ticker, daemon=True).start()
 
-    try:
-        srv = ThreadingHTTPServer((cfg.get("web_host"), cfg.get("web_port")), make_handler(cfg, rec))
-    except OSError as e:
-        log.error("Cannot start web server on %s:%s: %s", cfg.get("web_host"), cfg.get("web_port"), e)
-        return 1
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     log.info("Dashboard: http://%s:%s  (Ctrl+C to stop)", cfg.get("web_host"), cfg.get("web_port"))
     try:
@@ -871,10 +943,13 @@ def main():
     except KeyboardInterrupt:
         log.info("Stopping: finishing current file ...")
     stop.set()
+    reader.join()
     rec.close()
+    writer_stop.set()
     wt.join(timeout=30)
     srv.shutdown()
-    log.info("Stopped. %d file(s) left in spool will be uploaded on next start.", len(pending_files()))
+    srv.server_close()
+    log.info("Stopped. %d file(s) in spool.", len(pending_files()))
     return 0
 
 
